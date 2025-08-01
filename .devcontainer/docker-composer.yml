@@ -1,0 +1,144 @@
+version: '3.8'
+
+services:
+  postgres:
+    image: postgres:15
+    environment:
+      POSTGRES_DB: identus_db
+      POSTGRES_USER: identus_user
+      POSTGRES_PASSWORD: identus_pass
+      POSTGRES_INITDB_ARGS: "--encoding=UTF8 --lc-collate=C --lc-ctype=C"
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./scripts/init-db.sql:/docker-entrypoint-initdb.d/init-db.sql
+    networks:
+      - identus-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U identus_user -d identus_db"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+    restart: unless-stopped
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    networks:
+      - identus-network
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    restart: unless-stopped
+    command: redis-server --appendonly yes
+
+  issuer-agent:
+    image: ghcr.io/hyperledger/identus-cloud-agent:1.33.0
+    environment:
+      POLLUX_DB_HOST: postgres
+      POLLUX_DB_PORT: 5432
+      POLLUX_DB_NAME: identus_db
+      POLLUX_DB_USER: identus_user
+      POLLUX_DB_PASSWORD: identus_pass
+      AGENT_HTTP_PORT: 8000
+      AGENT_DIDCOMM_PORT: 8001
+      AGENT_HTTP_ENDPOINT: http://localhost:8000
+      POLLUX_STATUS_LIST_REGISTRY_PUBLIC_URL: http://localhost:8000
+    ports:
+      - "8000:8000"
+      - "8001:8001"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - identus-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/_system/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 60s
+    restart: unless-stopped
+
+  holder-agent:
+    image: ghcr.io/hyperledger/identus-cloud-agent:1.33.0
+    environment:
+      POLLUX_DB_HOST: postgres
+      POLLUX_DB_PORT: 5432
+      POLLUX_DB_NAME: identus_db
+      POLLUX_DB_USER: identus_user
+      POLLUX_DB_PASSWORD: identus_pass
+      AGENT_HTTP_PORT: 7000
+      AGENT_DIDCOMM_PORT: 7001
+      AGENT_HTTP_ENDPOINT: http://localhost:7000
+      POLLUX_STATUS_LIST_REGISTRY_PUBLIC_URL: http://localhost:7000
+    ports:
+      - "7000:7000"
+      - "7001:7001"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - identus-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:7000/_system/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 60s
+    restart: unless-stopped
+
+  verifier-agent:
+    image: ghcr.io/hyperledger/identus-cloud-agent:1.33.0
+    environment:
+      POLLUX_DB_HOST: postgres
+      POLLUX_DB_PORT: 5432
+      POLLUX_DB_NAME: identus_db
+      POLLUX_DB_USER: identus_user
+      POLLUX_DB_PASSWORD: identus_pass
+      AGENT_HTTP_PORT: 9000
+      AGENT_DIDCOMM_PORT: 9001
+      AGENT_HTTP_ENDPOINT: http://localhost:9000
+      POLLUX_STATUS_LIST_REGISTRY_PUBLIC_URL: http://localhost:9000
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - identus-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/_system/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 60s
+    restart: unless-stopped
+
+volumes:
+  postgres_data:
+    driver: local
+  redis_data:
+    driver: local
+
+networks:
+  identus-network:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.20.0.0/16
