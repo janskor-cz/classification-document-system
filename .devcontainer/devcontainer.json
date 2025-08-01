@@ -1,0 +1,87 @@
+{
+  "name": "Classification Document System",
+  "image": "mcr.microsoft.com/devcontainers/python:3.11-bullseye",
+  
+  "features": {
+    "ghcr.io/devcontainers/features/docker-in-docker:2": {
+      "version": "latest",
+      "enableNonRootDocker": "true"
+    },
+    "ghcr.io/devcontainers/features/node:1": {
+      "version": "18"
+    }
+  },
+  
+  "forwardPorts": [5000, 8000, 7000, 9000, 5432, 6379],
+  
+  "portsAttributes": {
+    "5000": {
+      "label": "Flask Application - Dashboard",
+      "onAutoForward": "openBrowser"
+    },
+    "8000": {
+      "label": "Identus Issuer Agent API",
+      "onAutoForward": "ignore"
+    },
+    "7000": {
+      "label": "Identus Holder Agent API",
+      "onAutoForward": "ignore"
+    },
+    "9000": {
+      "label": "Identus Verifier Agent API",
+      "onAutoForward": "ignore"
+    },
+    "5432": {
+      "label": "PostgreSQL Database",
+      "onAutoForward": "ignore"
+    },
+    "6379": {
+      "label": "Redis Cache",
+      "onAutoForward": "ignore"
+    }
+  },
+  
+  "postCreateCommand": ".devcontainer/setup.sh",
+  "postStartCommand": ".devcontainer/startup.sh",
+  
+  "customizations": {
+    "vscode": {
+      "extensions": [
+        "ms-python.python",
+        "ms-python.flake8",
+        "ms-python.pylint",
+        "ms-vscode.docker",
+        "ms-vscode.vscode-json",
+        "redhat.vscode-yaml",
+        "GitHub.copilot",
+        "GitHub.copilot-chat"
+      ],
+      "settings": {
+        "python.defaultInterpreterPath": "./venv/bin/python",
+        "python.terminal.activateEnvironment": true,
+        "terminal.integrated.defaultProfile.linux": "bash",
+        "files.exclude": {
+          "**/__pycache__": true,
+          "**/*.pyc": true
+        }
+      }
+    }
+  },
+  
+  "remoteUser": "vscode",
+  "containerEnv": {
+    "FLASK_ENV": "development",
+    "FLASK_DEBUG": "1",
+    "CODESPACES": "true",
+    "PYTHONPATH": "/workspaces/classification-document-system"
+  },
+  
+  "hostRequirements": {
+    "cpus": 4,
+    "memory": "8gb"
+  },
+  
+  "mounts": [
+    "source=/var/run/docker.sock,target=/var/run/docker.sock,type=bind,consistency=cached"
+  ]
+}
