@@ -1,0 +1,444 @@
+{% extends “base.html” %}
+
+{% block title %}Dashboard - Classification Document System{% endblock %}
+
+{% block extra_css %}
+
+<style>
+    .stat-card {
+        transition: transform 0.2s ease;
+    }
+    .stat-card:hover {
+        transform: translateY(-2px);
+    }
+    .classification-badge {
+        font-size: 0.75rem;
+        padding: 0.25rem 0.5rem;
+    }
+    .recent-activity {
+        max-height: 400px;
+        overflow-y: auto;
+    }
+    .activity-item {
+        border-left: 3px solid #dee2e6;
+        padding-left: 1rem;
+        margin-bottom: 1rem;
+    }
+    .activity-item.success {
+        border-left-color: #28a745;
+    }
+    .activity-item.warning {
+        border-left-color: #ffc107;
+    }
+    .activity-item.danger {
+        border-left-color: #dc3545;
+    }
+    .quick-action-card {
+        transition: all 0.3s ease;
+        cursor: pointer;
+    }
+    .quick-action-card:hover {
+        background-color: #f8f9fa;
+        transform: scale(1.02);
+    }
+</style>
+
+{% endblock %}
+
+{% block content %}
+
+<div class="row">
+    <div class="col-12">
+        <div class="d-flex justify-content-between align-items-center mb-4">
+            <div>
+                <h1><i class="fas fa-tachometer-alt me-2 text-primary"></i>Dashboard</h1>
+                <p class="text-muted mb-0">
+                    Welcome back, 
+                    {% if current_user.is_authenticated %}
+                        <strong>{{ current_user.name }}</strong>
+                    {% else %}
+                        <strong>Guest User</strong>
+                    {% endif %}
+                </p>
+            </div>
+            <div>
+                <button class="btn btn-outline-primary" onclick="refreshDashboard()">
+                    <i class="fas fa-sync-alt me-1"></i>Refresh
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Statistics Cards -->
+
+<div class="row mb-4">
+    <div class="col-xl-3 col-md-6 mb-3">
+        <div class="card stat-card border-0 shadow-sm">
+            <div class="card-body">
+                <div class="d-flex align-items-center">
+                    <div class="flex-shrink-0">
+                        <div class="bg-primary bg-gradient rounded-3 p-3 text-white">
+                            <i class="fas fa-id-card fa-lg"></i>
+                        </div>
+                    </div>
+                    <div class="flex-grow-1 ms-3">
+                        <div class="small text-muted">My Credentials</div>
+                        <div class="h4 mb-0" id="my-credentials-count">{{ stats.my_credentials or 0 }}</div>
+                        <div class="small text-success">
+                            <i class="fas fa-check me-1"></i>{{ stats.active_credentials or 0 }} Active
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+```
+<div class="col-xl-3 col-md-6 mb-3">
+    <div class="card stat-card border-0 shadow-sm">
+        <div class="card-body">
+            <div class="d-flex align-items-center">
+                <div class="flex-shrink-0">
+                    <div class="bg-success bg-gradient rounded-3 p-3 text-white">
+                        <i class="fas fa-file-alt fa-lg"></i>
+                    </div>
+                </div>
+                <div class="flex-grow-1 ms-3">
+                    <div class="small text-muted">Documents Accessed</div>
+                    <div class="h4 mb-0" id="documents-accessed">{{ stats.documents_accessed or 0 }}</div>
+                    <div class="small text-info">
+                        <i class="fas fa-eye me-1"></i>This Month
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div class="col-xl-3 col-md-6 mb-3">
+    <div class="card stat-card border-0 shadow-sm">
+        <div class="card-body">
+            <div class="d-flex align-items-center">
+                <div class="flex-shrink-0">
+                    <div class="bg-warning bg-gradient rounded-3 p-3 text-white">
+                        <i class="fas fa-clock fa-lg"></i>
+                    </div>
+                </div>
+                <div class="flex-grow-1 ms-3">
+                    <div class="small text-muted">Pending Requests</div>
+                    <div class="h4 mb-0" id="pending-requests">{{ stats.pending_requests or 0 }}</div>
+                    <div class="small text-warning">
+                        <i class="fas fa-hourglass-half me-1"></i>Awaiting Approval
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div class="col-xl-3 col-md-6 mb-3">
+    <div class="card stat-card border-0 shadow-sm">
+        <div class="card-body">
+            <div class="d-flex align-items-center">
+                <div class="flex-shrink-0">
+                    <div class="bg-info bg-gradient rounded-3 p-3 text-white">
+                        <i class="fas fa-shield-alt fa-lg"></i>
+                    </div>
+                </div>
+                <div class="flex-grow-1 ms-3">
+                    <div class="small text-muted">Security Score</div>
+                    <div class="h4 mb-0">{{ stats.security_score or 85 }}%</div>
+                    <div class="small text-success">
+                        <i class="fas fa-arrow-up me-1"></i>Excellent
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+```
+
+</div>
+
+<div class="row">
+    <!-- Quick Actions -->
+    <div class="col-lg-4 mb-4">
+        <div class="card border-0 shadow-sm">
+            <div class="card-header bg-transparent border-0">
+                <h5 class="mb-0"><i class="fas fa-bolt me-2 text-warning"></i>Quick Actions</h5>
+            </div>
+            <div class="card-body">
+                <div class="row g-2">
+                    <div class="col-6">
+                        <div class="card quick-action-card border" onclick="requestCredential()">
+                            <div class="card-body text-center py-3">
+                                <i class="fas fa-plus-circle fa-2x text-primary mb-2"></i>
+                                <div class="small">Request Credential</div>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="col-6">
+                        <div class="card quick-action-card border" onclick="uploadDocument()">
+                            <div class="card-body text-center py-3">
+                                <i class="fas fa-upload fa-2x text-success mb-2"></i>
+                                <div class="small">Upload Document</div>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="col-6">
+                        <div class="card quick-action-card border" onclick="browseDocuments()">
+                            <div class="card-body text-center py-3">
+                                <i class="fas fa-search fa-2x text-info mb-2"></i>
+                                <div class="small">Browse Documents</div>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="col-6">
+                        <div class="card quick-action-card border" onclick="viewProfile()">
+                            <div class="card-body text-center py-3">
+                                <i class="fas fa-user-cog fa-2x text-secondary mb-2"></i>
+                                <div class="small">Manage Profile</div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+```
+<!-- My Credentials -->
+<div class="col-lg-4 mb-4">
+    <div class="card border-0 shadow-sm">
+        <div class="card-header bg-transparent border-0 d-flex justify-content-between align-items-center">
+            <h5 class="mb-0"><i class="fas fa-id-card me-2 text-primary"></i>My Credentials</h5>
+            <a href="{{ url_for('credentials.manage') }}" class="btn btn-sm btn-outline-primary">View All</a>
+        </div>
+        <div class="card-body">
+            {% if credentials %}
+                <div class="list-group list-group-flush">
+                    {% for credential in credentials %}
+                    <div class="list-group-item px-0 d-flex justify-content-between align-items-center">
+                        <div>
+                            <div class="fw-semibold">{{ credential.name }}</div>
+                            <div class="small text-muted">
+                                <i class="fas fa-calendar me-1"></i>
+                                Issued {{ credential.issued_date.strftime('%Y-%m-%d') }}
+                            </div>
+                        </div>
+                        <div>
+                            {% if credential.type == 'public' %}
+                                <span class="badge bg-success classification-badge">Public</span>
+                            {% elif credential.type == 'internal' %}
+                                <span class="badge bg-warning classification-badge">Internal</span>
+                            {% elif credential.type == 'confidential' %}
+                                <span class="badge bg-danger classification-badge">Confidential</span>
+                            {% else %}
+                                <span class="badge bg-primary classification-badge">Enterprise</span>
+                            {% endif %}
+                        </div>
+                    </div>
+                    {% endfor %}
+                </div>
+            {% else %}
+                <div class="text-center py-4">
+                    <i class="fas fa-id-card fa-3x text-muted mb-3"></i>
+                    <p class="text-muted">No credentials yet</p>
+                    <button class="btn btn-primary btn-sm" onclick="requestCredential()">
+                        <i class="fas fa-plus me-1"></i>Request Your First Credential
+                    </button>
+                </div>
+            {% endif %}
+        </div>
+    </div>
+</div>
+
+<!-- Recent Activity -->
+<div class="col-lg-4 mb-4">
+    <div class="card border-0 shadow-sm">
+        <div class="card-header bg-transparent border-0 d-flex justify-content-between align-items-center">
+            <h5 class="mb-0"><i class="fas fa-history me-2 text-info"></i>Recent Activity</h5>
+            <a href="{{ url_for('audit.logs') }}" class="btn btn-sm btn-outline-info">View All</a>
+        </div>
+        <div class="card-body recent-activity">
+            {% if recent_activities %}
+                {% for activity in recent_activities %}
+                <div class="activity-item {{ activity.type }}">
+                    <div class="d-flex justify-content-between align-items-start">
+                        <div class="flex-grow-1">
+                            <div class="small fw-semibold">{{ activity.action }}</div>
+                            <div class="small text-muted">{{ activity.description }}</div>
+                        </div>
+                        <div class="small text-muted ms-2">
+                            {{ activity.timestamp.strftime('%H:%M') }}
+                        </div>
+                    </div>
+                </div>
+                {% endfor %}
+            {% else %}
+                <div class="text-center py-4">
+                    <i class="fas fa-history fa-3x text-muted mb-3"></i>
+                    <p class="text-muted">No recent activity</p>
+                </div>
+            {% endif %}
+        </div>
+    </div>
+</div>
+```
+
+</div>
+
+<!-- System Status -->
+
+<div class="row">
+    <div class="col-12">
+        <div class="card border-0 shadow-sm">
+            <div class="card-header bg-transparent border-0">
+                <h5 class="mb-0"><i class="fas fa-server me-2 text-success"></i>System Status</h5>
+            </div>
+            <div class="card-body">
+                <div class="row">
+                    <div class="col-md-3 text-center">
+                        <div class="p-3">
+                            <div class="h2 text-success mb-1" id="identus-issuer-status">
+                                <i class="fas fa-check-circle"></i>
+                            </div>
+                            <div class="small text-muted">Identus Issuer</div>
+                        </div>
+                    </div>
+                    <div class="col-md-3 text-center">
+                        <div class="p-3">
+                            <div class="h2 text-success mb-1" id="identus-holder-status">
+                                <i class="fas fa-check-circle"></i>
+                            </div>
+                            <div class="small text-muted">Identus Holder</div>
+                        </div>
+                    </div>
+                    <div class="col-md-3 text-center">
+                        <div class="p-3">
+                            <div class="h2 text-success mb-1" id="identus-verifier-status">
+                                <i class="fas fa-check-circle"></i>
+                            </div>
+                            <div class="small text-muted">Identus Verifier</div>
+                        </div>
+                    </div>
+                    <div class="col-md-3 text-center">
+                        <div class="p-3">
+                            <div class="h2 text-success mb-1" id="database-status">
+                                <i class="fas fa-check-circle"></i>
+                            </div>
+                            <div class="small text-muted">Database</div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+
+<script>
+// Quick action functions
+function requestCredential() {
+    window.location.href = '{{ url_for("credentials.request") }}';
+}
+
+function uploadDocument() {
+    window.location.href = '{{ url_for("documents.upload") }}';
+}
+
+function browseDocuments() {
+    window.location.href = '{{ url_for("documents.browse") }}';
+}
+
+function viewProfile() {
+    window.location.href = '{{ url_for("auth.profile") }}';
+}
+
+// Refresh dashboard data
+async function refreshDashboard() {
+    try {
+        // Update statistics
+        const statsResponse = await fetch('/api/dashboard/stats');
+        const stats = await statsResponse.json();
+        
+        document.getElementById('my-credentials-count').textContent = stats.my_credentials || 0;
+        document.getElementById('documents-accessed').textContent = stats.documents_accessed || 0;
+        document.getElementById('pending-requests').textContent = stats.pending_requests || 0;
+        
+        // Update system status
+        const statusResponse = await fetch('/api/system/detailed-status');
+        const status = await statusResponse.json();
+        
+        updateServiceStatus('identus-issuer-status', status.identus_issuer);
+        updateServiceStatus('identus-holder-status', status.identus_holder);
+        updateServiceStatus('identus-verifier-status', status.identus_verifier);
+        updateServiceStatus('database-status', status.database);
+        
+        // Show success message
+        showToast('Dashboard refreshed successfully', 'success');
+        
+    } catch (error) {
+        console.error('Failed to refresh dashboard:', error);
+        showToast('Failed to refresh dashboard', 'error');
+    }
+}
+
+function updateServiceStatus(elementId, isHealthy) {
+    const element = document.getElementById(elementId);
+    if (isHealthy) {
+        element.className = 'h2 text-success mb-1';
+        element.innerHTML = '<i class="fas fa-check-circle"></i>';
+    } else {
+        element.className = 'h2 text-danger mb-1';
+        element.innerHTML = '<i class="fas fa-exclamation-circle"></i>';
+    }
+}
+
+function showToast(message, type) {
+    // Create and show a toast notification
+    const toastContainer = document.getElementById('toast-container') || createToastContainer();
+    
+    const toast = document.createElement('div');
+    toast.className = `toast align-items-center text-white bg-${type === 'error' ? 'danger' : type} border-0`;
+    toast.setAttribute('role', 'alert');
+    toast.innerHTML = `
+        <div class="d-flex">
+            <div class="toast-body">${message}</div>
+            <button type="button" class="btn-close btn-close-white me-2 m-auto" data-bs-dismiss="toast"></button>
+        </div>
+    `;
+    
+    toastContainer.appendChild(toast);
+    const bsToast = new bootstrap.Toast(toast);
+    bsToast.show();
+    
+    // Remove after hiding
+    toast.addEventListener('hidden.bs.toast', () => {
+        toast.remove();
+    });
+}
+
+function createToastContainer() {
+    const container = document.createElement('div');
+    container.id = 'toast-container';
+    container.className = 'toast-container position-fixed bottom-0 end-0 p-3';
+    container.style.zIndex = '1055';
+    document.body.appendChild(container);
+    return container;
+}
+
+// Auto-refresh every 5 minutes
+setInterval(refreshDashboard, 5 * 60 * 1000);
+
+// Initial load
+document.addEventListener('DOMContentLoaded', function() {
+    // Refresh data after page load
+    setTimeout(refreshDashboard, 1000);
+});
+</script>
+
+{% endblock %}
