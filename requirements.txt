@@ -8,7 +8,7 @@ python-dateutil==2.8.2
 qrcode[pil]==7.4.2
 
 # Database
-sqlite3  # Built into Python
+# sqlite3 is built into Python, no need to install
 sqlalchemy==2.0.21
 
 # Security

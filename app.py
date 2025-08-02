@@ -623,8 +623,8 @@ def dashboard_stats():
         
         return jsonify(stats)
         
-    } catch (error) {
-        return jsonify({'error': str(error)}), 500
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
 
 @app.route('/api/dashboard/activity', methods=['GET'])
 def dashboard_activity():
