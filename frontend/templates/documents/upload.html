@@ -72,24 +72,22 @@
                 <h1><i class="fas fa-upload me-2 text-primary"></i>Upload Document</h1>
                 <p class="text-muted mb-0">Upload and classify a new document for secure storage</p>
             </div>
-            <a href="{{ url_for('documents.browse') }}" class="btn btn-outline-secondary">
+            <a href="#" class="btn btn-outline-secondary">
                 <i class="fas fa-arrow-left me-1"></i>Back to Documents
             </a>
         </div>
     </div>
 </div>
 
-<form id="upload-form" method="POST" enctype="multipart/form-data" action="{{ url_for('documents.upload') }}">
-    {{ csrf_token() }}
+<form id="upload-form" method="POST" enctype="multipart/form-data" action="{{ url_for('handle_document_upload') }}">
 
-```
-<div class="row">
-    <!-- File Upload Area -->
-    <div class="col-lg-8 mb-4">
-        <div class="card border-0 shadow-sm">
-            <div class="card-header bg-transparent border-0">
-                <h5 class="mb-0"><i class="fas fa-file-upload me-2"></i>Select Document</h5>
-            </div>
+    <div class="row">
+        <!-- File Upload Area -->
+        <div class="col-lg-8 mb-4">
+            <div class="card border-0 shadow-sm">
+                <div class="card-header bg-transparent border-0">
+                    <h5 class="mb-0"><i class="fas fa-file-upload me-2"></i>Select Document</h5>
+                </div>
             <div class="card-body">
                 <div class="upload-area text-center py-5" id="upload-area">
                     <input type="file" 
@@ -108,7 +106,7 @@
                         </button>
                         <div class="mt-3 small text-muted">
                             Supported formats: PDF, DOC, DOCX, TXT<br>
-                            Maximum size: {{ config.MAX_FILE_SIZE // (1024*1024) }}MB
+                            Maximum size: {{ (config.documents.max_file_size or (100 * 1024 * 1024)) // (1024*1024) }}MB
                         </div>
                     </div>
                     
@@ -351,7 +349,7 @@ function handleFile(file) {
     }
     
     // Validate file size
-    const maxSize = {{ config.MAX_FILE_SIZE or (100 * 1024 * 1024) }};
+    const maxSize = {{ (config.documents.max_file_size or (100 * 1024 * 1024)) }};
     if (file.size > maxSize) {
         alert('File is too large. Maximum size is ' + (maxSize / (1024 * 1024)) + 'MB');
         return;

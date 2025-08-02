@@ -60,10 +60,8 @@
             <p class="mb-0 opacity-75">Secure Document Access</p>
         </div>
 
-```
-    <div class="card-body p-4">
-        <form method="POST" action="{{ url_for('auth.login') }}" id="login-form">
-            {{ csrf_token() }}
+        <div class="card-body p-4">
+            <form method="POST" action="{{ url_for('auth_login') }}" id="login-form">
             
             <div class="form-floating mb-3">
                 <input type="email" 
@@ -109,7 +107,7 @@
             </button>
             
             <div class="text-center">
-                <a href="{{ url_for('auth.forgot_password') }}" class="text-decoration-none">
+                <a href="#" class="text-decoration-none">
                     <i class="fas fa-key me-1"></i>Forgot your password?
                 </a>
             </div>
@@ -118,12 +116,11 @@
     
     <div class="card-footer bg-transparent border-0 text-center py-3">
         <p class="mb-2 text-muted small">Don't have an account?</p>
-        <a href="{{ url_for('auth.register') }}" class="btn btn-outline-primary">
+        <a href="#" class="btn btn-outline-primary">
             <i class="fas fa-user-plus me-2"></i>Create Account
         </a>
     </div>
 </div>
-```
 
 </div>
 
