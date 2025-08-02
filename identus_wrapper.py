@@ -11,6 +11,10 @@ import os
 from datetime import datetime
 from typing import Dict, Optional
 
+from config import get_identus_config
+
+identus_config = get_identus_config()
+
 class IdentusConfig:
     """Configuration for Identus Cloud Agent"""
     def __init__(self, base_url: str = "http://localhost:8000", api_key: Optional[str] = None):
