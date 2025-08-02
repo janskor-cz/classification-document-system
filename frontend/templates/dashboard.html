@@ -11,7 +11,6 @@
     </div>
 </div>
 
-<!-- System Status -->
 <div class="row mb-4">
     <div class="col-12">
         <div class="card">
@@ -21,16 +20,12 @@
                 </h5>
             </div>
             <div class="card-body">
-                <div id="system-status-container">
-                    <span id="system-status" class="badge bg-secondary">Checking...</span>
-                    <span id="identus-status" class="badge bg-secondary">Checking...</span>
-                </div>
+                <span class="badge bg-warning">Demo Mode - Identus Offline</span>
             </div>
         </div>
     </div>
 </div>
 
-<!-- Statistics Cards -->
 <div class="row mb-4">
     <div class="col-md-3">
         <div class="card text-center">
@@ -73,7 +68,6 @@
     </div>
 </div>
 
-<!-- Quick Actions -->
 <div class="row mb-4">
     <div class="col-md-6">
         <div class="card">
@@ -110,9 +104,7 @@
                             <small class="fw-bold">{{ activity.action }}</small><br>
                             <small class="text-muted">{{ activity.description }}</small>
                         </div>
-                        <small class="text-muted">
-                            {{ activity.timestamp.strftime('%H:%M') if activity.timestamp else 'Now' }}
-                        </small>
+                        <small class="text-muted">Now</small>
                     </div>
                     {% if not loop.last %}<hr class="my-2">{% endif %}
                     {% endfor %}
@@ -124,90 +116,22 @@
     </div>
 </div>
 
-<!-- My Credentials -->
 <div class="row">
     <div class="col-12">
         <div class="card">
             <div class="card-header">
                 <h5 class="mb-0">
-                    <i class="fas fa-id-badge me-2"></i>My Credentials
+                    <i class="fas fa-id-badge me-2"></i>My Credentials (Demo)
                 </h5>
             </div>
             <div class="card-body">
-                {% if credentials %}
-                    <div class="row">
-                        {% for credential in credentials %}
-                        <div class="col-md-4 mb-3">
-                            <div class="card border-left-primary">
-                                <div class="card-body">
-                                    <h6 class="card-title">{{ credential.name }}</h6>
-                                    <p class="card-text">
-                                        <small class="text-muted">
-                                            Type: {{ credential.type|title }}<br>
-                                            Issued: {{ credential.issued_date.strftime('%Y-%m-%d') if credential.issued_date else 'Unknown' }}
-                                        </small>
-                                    </p>
-                                    <span class="badge bg-success">Active</span>
-                                </div>
-                            </div>
-                        </div>
-                        {% endfor %}
-                    </div>
-                {% else %}
-                    <div class="text-center py-4">
-                        <i class="fas fa-id-card fa-3x text-muted mb-3"></i>
-                        <h5 class="text-muted">No Credentials Yet</h5>
-                        <p class="text-muted">Request your first credential to get started</p>
-                        <button class="btn btn-primary">
-                            <i class="fas fa-plus me-2"></i>Request Credential
-                        </button>
-                    </div>
-                {% endif %}
+                <div class="text-center py-4">
+                    <i class="fas fa-id-card fa-3x text-muted mb-3"></i>
+                    <h5 class="text-muted">Demo Mode</h5>
+                    <p class="text-muted">Start Identus agents to enable real credential management</p>
+                </div>
             </div>
         </div>
     </div>
 </div>
-{% endblock %}
-
-{% block extra_js %}
-<script>
-// Auto-refresh dashboard status
-document.addEventListener('DOMContentLoaded', function() {
-    updateSystemStatus();
-    setInterval(updateSystemStatus, 30000); // Every 30 seconds
-});
-
-async function updateSystemStatus() {
-    try {
-        const response = await fetch('/api/system/status');
-        const status = await response.json();
-        
-        const systemStatus = document.getElementById('system-status');
-        const identusStatus = document.getElementById('identus-status');
-        
-        if (status.system_healthy) {
-            systemStatus.className = 'badge bg-success me-2';
-            systemStatus.innerHTML = '<i class="fas fa-check-circle me-1"></i>System Online';
-        } else {
-            systemStatus.className = 'badge bg-danger me-2';
-            systemStatus.innerHTML = '<i class="fas fa-exclamation-circle me-1"></i>System Issues';
-        }
-        
-        if (status.identus_healthy) {
-            identusStatus.className = 'badge bg-info me-2';
-            identusStatus.innerHTML = '<i class="fas fa-cloud me-1"></i>Identus Ready';
-        } else {
-            identusStatus.className = 'badge bg-warning me-2';
-            identusStatus.innerHTML = '<i class="fas fa-cloud-exclamation me-1"></i>Identus Issues';
-        }
-    } catch (error) {
-        console.error('Failed to update status:', error);
-    }
-}
-
-async function refreshDashboard() {
-    showInfo('Refreshing dashboard...');
-    location.reload();
-}
-</script>
 {% endblock %}
