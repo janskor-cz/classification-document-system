@@ -1,0 +1,19 @@
+# Core Dependencies
+flask==2.3.3
+flask-cors==4.0.0
+requests==2.31.0
+python-dateutil==2.8.2
+
+# Identus Integration
+qrcode[pil]==7.4.2
+
+# Database
+sqlite3  # Built into Python
+sqlalchemy==2.0.21
+
+# Security
+cryptography==41.0.4
+bcrypt==4.0.1
+
+# Development
+python-dotenv==1.0.0
