@@ -1,568 +1,142 @@
-{% extends “base.html” %}
+{% extends "base.html" %}
 
-{% block title %}Upload Document - Classification Document System{% endblock %}
-
-{% block extra_css %}
-
-<style>
-    .upload-area {
-        border: 2px dashed #dee2e6;
-        border-radius: 15px;
-        background: #f8f9fa;
-        transition: all 0.3s ease;
-        cursor: pointer;
-        position: relative;
-        overflow: hidden;
-    }
-    .upload-area:hover {
-        border-color: #667eea;
-        background: #f0f2ff;
-    }
-    .upload-area.dragover {
-        border-color: #667eea;
-        background: #e8ecff;
-        transform: scale(1.02);
-    }
-    .classification-selector {
-        background: white;
-        border-radius: 10px;
-        border: 2px solid #e9ecef;
-        transition: all 0.3s ease;
-    }
-    .classification-selector.selected {
-        border-color: #667eea;
-        background: #f0f2ff;
-    }
-    .classification-selector:hover {
-        border-color: #667eea;
-        cursor: pointer;
-    }
-    .file-preview {
-        background: white;
-        border-radius: 10px;
-        border: 1px solid #e9ecef;
-    }
-    .upload-progress {
-        height: 6px;
-        background: #e9ecef;
-        border-radius: 3px;
-        overflow: hidden;
-    }
-    .upload-progress-bar {
-        height: 100%;
-        background: linear-gradient(90deg, #667eea, #764ba2);
-        width: 0%;
-        transition: width 0.3s ease;
-    }
-    .metadata-field {
-        background: #f8f9fa;
-        border: 1px solid #e9ecef;
-        border-radius: 8px;
-    }
-</style>
-
-{% endblock %}
+{% block title %}Upload Document{% endblock %}
 
 {% block content %}
-
 <div class="row">
     <div class="col-12">
-        <div class="d-flex justify-content-between align-items-center mb-4">
-            <div>
-                <h1><i class="fas fa-upload me-2 text-primary"></i>Upload Document</h1>
-                <p class="text-muted mb-0">Upload and classify a new document for secure storage</p>
-            </div>
-            <a href="#" class="btn btn-outline-secondary">
-                <i class="fas fa-arrow-left me-1"></i>Back to Documents
-            </a>
-        </div>
+        <h1 class="mb-4">
+            <i class="fas fa-upload me-2"></i>Upload Document
+        </h1>
     </div>
 </div>
 
-<form id="upload-form" method="POST" enctype="multipart/form-data" action="{{ url_for('handle_document_upload') }}">
-
-    <div class="row">
-        <!-- File Upload Area -->
-        <div class="col-lg-8 mb-4">
-            <div class="card border-0 shadow-sm">
-                <div class="card-header bg-transparent border-0">
-                    <h5 class="mb-0"><i class="fas fa-file-upload me-2"></i>Select Document</h5>
-                </div>
+<div class="row">
+    <div class="col-md-8">
+        <div class="card">
+            <div class="card-header">
+                <h5 class="mb-0">
+                    <i class="fas fa-file-upload me-2"></i>Document Upload & Classification
+                </h5>
+            </div>
             <div class="card-body">
-                <div class="upload-area text-center py-5" id="upload-area">
-                    <input type="file" 
-                           id="file-input" 
-                           name="document" 
-                           accept=".pdf,.doc,.docx,.txt" 
-                           class="d-none" 
-                           required>
-                    
-                    <div id="upload-prompt">
-                        <i class="fas fa-cloud-upload-alt fa-4x text-muted mb-3"></i>
-                        <h5 class="text-muted">Drop your document here</h5>
-                        <p class="text-muted mb-3">or click to browse files</p>
-                        <button type="button" class="btn btn-primary" onclick="document.getElementById('file-input').click()">
-                            <i class="fas fa-folder-open me-2"></i>Choose File
-                        </button>
-                        <div class="mt-3 small text-muted">
-                            Supported formats: PDF, DOC, DOCX, TXT<br>
-                            Maximum size: {{ (config.documents.max_file_size or (100 * 1024 * 1024)) // (1024*1024) }}MB
-                        </div>
+                <form method="POST" enctype="multipart/form-data" action="{{ url_for('handle_document_upload') }}">
+                    <div class="mb-3">
+                        <label for="document" class="form-label">
+                            <i class="fas fa-file me-1"></i>Select Document *
+                        </label>
+                        <input type="file" class="form-control" id="document" name="document" 
+                               accept=".pdf,.doc,.docx,.txt" required>
+                        <div class="form-text">Supported formats: PDF, DOC, DOCX, TXT</div>
                     </div>
-                    
-                    <div id="file-preview" class="d-none">
-                        <div class="file-preview p-3 mb-3">
-                            <div class="d-flex align-items-center">
-                                <div class="flex-shrink-0 me-3">
-                                    <i class="fas fa-file-alt fa-2x text-primary" id="file-icon"></i>
-                                </div>
-                                <div class="flex-grow-1">
-                                    <div class="fw-semibold" id="file-name"></div>
-                                    <div class="small text-muted" id="file-info"></div>
-                                    <div class="upload-progress mt-2 d-none" id="upload-progress">
-                                        <div class="upload-progress-bar" id="upload-progress-bar"></div>
+
+                    <div class="mb-3">
+                        <label for="title" class="form-label">
+                            <i class="fas fa-heading me-1"></i>Document Title *
+                        </label>
+                        <input type="text" class="form-control" id="title" name="title" required 
+                               placeholder="Enter document title">
+                    </div>
+
+                    <div class="mb-3">
+                        <label class="form-label">
+                            <i class="fas fa-tags me-1"></i>Classification Level *
+                        </label>
+                        <div class="row">
+                            <div class="col-md-4 mb-2">
+                                <div class="card">
+                                    <div class="card-body text-center">
+                                        <input type="radio" name="classification" value="public" id="public" required>
+                                        <label for="public" class="form-label">
+                                            <i class="fas fa-globe fa-2x text-success mb-2 d-block"></i>
+                                            <h6>Public</h6>
+                                            <small class="text-muted">General access</small>
+                                        </label>
                                     </div>
                                 </div>
-                                <button type="button" class="btn btn-sm btn-outline-danger" onclick="clearFile()">
-                                    <i class="fas fa-times"></i>
-                                </button>
+                            </div>
+                            <div class="col-md-4 mb-2">
+                                <div class="card">
+                                    <div class="card-body text-center">
+                                        <input type="radio" name="classification" value="internal" id="internal" required>
+                                        <label for="internal" class="form-label">
+                                            <i class="fas fa-building fa-2x text-warning mb-2 d-block"></i>
+                                            <h6>Internal</h6>
+                                            <small class="text-muted">Company only</small>
+                                        </label>
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="col-md-4 mb-2">
+                                <div class="card">
+                                    <div class="card-body text-center">
+                                        <input type="radio" name="classification" value="confidential" id="confidential" required>
+                                        <label for="confidential" class="form-label">
+                                            <i class="fas fa-lock fa-2x text-danger mb-2 d-block"></i>
+                                            <h6>Confidential</h6>
+                                            <small class="text-muted">Restricted access</small>
+                                        </label>
+                                    </div>
+                                </div>
                             </div>
                         </div>
                     </div>
-                </div>
+
+                    <div class="mb-3">
+                        <label for="description" class="form-label">
+                            <i class="fas fa-align-left me-1"></i>Description
+                        </label>
+                        <textarea class="form-control" id="description" name="description" rows="3" 
+                                  placeholder="Optional description"></textarea>
+                    </div>
+
+                    <div class="d-grid gap-2 d-md-flex justify-content-md-end">
+                        <a href="{{ url_for('dashboard') }}" class="btn btn-outline-secondary">
+                            <i class="fas fa-times me-2"></i>Cancel
+                        </a>
+                        <button type="submit" class="btn btn-primary">
+                            <i class="fas fa-upload me-2"></i>Upload & Classify
+                        </button>
+                    </div>
+                </form>
             </div>
         </div>
     </div>
-    
-    <!-- Classification and Metadata -->
-    <div class="col-lg-4 mb-4">
-        <div class="card border-0 shadow-sm">
-            <div class="card-header bg-transparent border-0">
-                <h5 class="mb-0"><i class="fas fa-tags me-2"></i>Classification</h5>
+
+    <div class="col-md-4">
+        <div class="card">
+            <div class="card-header">
+                <h6 class="mb-0">
+                    <i class="fas fa-info-circle me-2"></i>Classification Guidelines
+                </h6>
             </div>
             <div class="card-body">
                 <div class="mb-3">
-                    <label class="form-label fw-semibold">Security Level <span class="text-danger">*</span></label>
-                    
-                    <div class="classification-selector p-3 mb-2" data-level="public">
-                        <input type="radio" name="classification" value="public" id="public" class="form-check-input me-2" required>
-                        <label for="public" class="form-check-label w-100 cursor-pointer">
-                            <div class="d-flex align-items-center">
-                                <span class="badge bg-success me-2">
-                                    <i class="fas fa-globe"></i>
-                                </span>
-                                <div>
-                                    <div class="fw-semibold">Public</div>
-                                    <div class="small text-muted">General access documents</div>
-                                </div>
-                            </div>
-                        </label>
-                    </div>
-                    
-                    <div class="classification-selector p-3 mb-2" data-level="internal">
-                        <input type="radio" name="classification" value="internal" id="internal" class="form-check-input me-2" required>
-                        <label for="internal" class="form-check-label w-100 cursor-pointer">
-                            <div class="d-flex align-items-center">
-                                <span class="badge bg-warning me-2">
-                                    <i class="fas fa-building"></i>
-                                </span>
-                                <div>
-                                    <div class="fw-semibold">Internal</div>
-                                    <div class="small text-muted">Company internal only</div>
-                                </div>
-                            </div>
-                        </label>
-                    </div>
-                    
-                    <div class="classification-selector p-3 mb-2" data-level="confidential">
-                        <input type="radio" name="classification" value="confidential" id="confidential" class="form-check-input me-2" required>
-                        <label for="confidential" class="form-check-label w-100 cursor-pointer">
-                            <div class="d-flex align-items-center">
-                                <span class="badge bg-danger me-2">
-                                    <i class="fas fa-lock"></i>
-                                </span>
-                                <div>
-                                    <div class="fw-semibold">Confidential</div>
-                                    <div class="small text-muted">Restricted access only</div>
-                                </div>
-                            </div>
-                        </label>
-                    </div>
+                    <h6 class="text-success">
+                        <i class="fas fa-globe me-1"></i>Public
+                    </h6>
+                    <small class="text-muted">
+                        Information that can be shared with anyone.
+                    </small>
                 </div>
-            </div>
-        </div>
-    </div>
-</div>
-
-<!-- Document Metadata -->
-<div class="row">
-    <div class="col-12">
-        <div class="card border-0 shadow-sm">
-            <div class="card-header bg-transparent border-0">
-                <h5 class="mb-0"><i class="fas fa-info-circle me-2"></i>Document Information</h5>
-            </div>
-            <div class="card-body">
-                <div class="row">
-                    <div class="col-md-6 mb-3">
-                        <label for="title" class="form-label fw-semibold">Document Title <span class="text-danger">*</span></label>
-                        <input type="text" 
-                               class="form-control metadata-field" 
-                               id="title" 
-                               name="title" 
-                               placeholder="Enter document title"
-                               required>
-                    </div>
-                    
-                    <div class="col-md-6 mb-3">
-                        <label for="category" class="form-label fw-semibold">Category</label>
-                        <select class="form-select metadata-field" id="category" name="category">
-                            <option value="">Select category</option>
-                            <option value="policy">Policy</option>
-                            <option value="procedure">Procedure</option>
-                            <option value="report">Report</option>
-                            <option value="contract">Contract</option>
-                            <option value="specification">Specification</option>
-                            <option value="manual">Manual</option>
-                            <option value="other">Other</option>
-                        </select>
-                    </div>
-                </div>
-                
-                <div class="row">
-                    <div class="col-md-6 mb-3">
-                        <label for="department" class="form-label fw-semibold">Department</label>
-                        <input type="text" 
-                               class="form-control metadata-field" 
-                               id="department" 
-                               name="department" 
-                               placeholder="e.g., HR, IT, Finance">
-                    </div>
-                    
-                    <div class="col-md-6 mb-3">
-                        <label for="tags" class="form-label fw-semibold">Tags</label>
-                        <input type="text" 
-                               class="form-control metadata-field" 
-                               id="tags" 
-                               name="tags" 
-                               placeholder="Comma-separated tags">
-                        <div class="form-text">Use tags to make documents easier to find</div>
-                    </div>
-                </div>
-                
                 <div class="mb-3">
-                    <label for="description" class="form-label fw-semibold">Description</label>
-                    <textarea class="form-control metadata-field" 
-                              id="description" 
-                              name="description" 
-                              rows="3" 
-                              placeholder="Brief description of the document content"></textarea>
+                    <h6 class="text-warning">
+                        <i class="fas fa-building me-1"></i>Internal
+                    </h6>
+                    <small class="text-muted">
+                        Information for internal company use only.
+                    </small>
                 </div>
-                
-                <div class="form-check mb-3">
-                    <input class="form-check-input" type="checkbox" id="encrypt_immediately" name="encrypt_immediately" checked>
-                    <label class="form-check-label" for="encrypt_immediately">
-                        <strong>Encrypt document immediately after upload</strong>
-                        <div class="small text-muted">Recommended for all classified documents</div>
-                    </label>
+                <div class="mb-3">
+                    <h6 class="text-danger">
+                        <i class="fas fa-lock me-1"></i>Confidential
+                    </h6>
+                    <small class="text-muted">
+                        Sensitive information requiring special authorization.
+                    </small>
                 </div>
             </div>
         </div>
     </div>
 </div>
-
-<!-- Upload Actions -->
-<div class="row mt-4">
-    <div class="col-12">
-        <div class="d-flex justify-content-between align-items-center">
-            <div class="text-muted small">
-                <i class="fas fa-info-circle me-1"></i>
-                Document will be encrypted and stored securely according to its classification level
-            </div>
-            <div>
-                <button type="button" class="btn btn-outline-secondary me-2" onclick="resetForm()">
-                    <i class="fas fa-undo me-1"></i>Reset
-                </button>
-                <button type="submit" class="btn btn-primary" id="upload-btn" disabled>
-                    <i class="fas fa-upload me-2"></i>
-                    <span class="upload-text">Upload Document</span>
-                    <span class="upload-spinner d-none">
-                        <i class="fas fa-spinner fa-spin me-2"></i>Uploading...
-                    </span>
-                </button>
-            </div>
-        </div>
-    </div>
-</div>
-```
-
-</form>
-{% endblock %}
-
-{% block extra_js %}
-
-<script>
-// File upload handling
-const uploadArea = document.getElementById('upload-area');
-const fileInput = document.getElementById('file-input');
-const uploadPrompt = document.getElementById('upload-prompt');
-const filePreview = document.getElementById('file-preview');
-const uploadBtn = document.getElementById('upload-btn');
-const uploadForm = document.getElementById('upload-form');
-
-// Drag and drop functionality
-uploadArea.addEventListener('dragover', (e) => {
-    e.preventDefault();
-    uploadArea.classList.add('dragover');
-});
-
-uploadArea.addEventListener('dragleave', () => {
-    uploadArea.classList.remove('dragover');
-});
-
-uploadArea.addEventListener('drop', (e) => {
-    e.preventDefault();
-    uploadArea.classList.remove('dragover');
-    const files = e.dataTransfer.files;
-    if (files.length > 0) {
-        handleFile(files[0]);
-    }
-});
-
-uploadArea.addEventListener('click', () => {
-    fileInput.click();
-});
-
-fileInput.addEventListener('change', (e) => {
-    if (e.target.files.length > 0) {
-        handleFile(e.target.files[0]);
-    }
-});
-
-function handleFile(file) {
-    // Validate file type
-    const allowedTypes = ['.pdf', '.doc', '.docx', '.txt'];
-    const fileExtension = '.' + file.name.split('.').pop().toLowerCase();
-    
-    if (!allowedTypes.includes(fileExtension)) {
-        alert('Please select a valid file type: ' + allowedTypes.join(', '));
-        return;
-    }
-    
-    // Validate file size
-    const maxSize = {{ (config.documents.max_file_size or (100 * 1024 * 1024)) }};
-    if (file.size > maxSize) {
-        alert('File is too large. Maximum size is ' + (maxSize / (1024 * 1024)) + 'MB');
-        return;
-    }
-    
-    // Update UI
-    updateFilePreview(file);
-    uploadPrompt.classList.add('d-none');
-    filePreview.classList.remove('d-none');
-    
-    // Auto-fill title if empty
-    const titleInput = document.getElementById('title');
-    if (!titleInput.value) {
-        titleInput.value = file.name.replace(/\.[^/.]+$/, "");
-    }
-    
-    // Enable upload button
-    updateUploadButton();
-}
-
-function updateFilePreview(file) {
-    const fileName = document.getElementById('file-name');
-    const fileInfo = document.getElementById('file-info');
-    const fileIcon = document.getElementById('file-icon');
-    
-    fileName.textContent = file.name;
-    fileInfo.textContent = formatFileSize(file.size) + ' • ' + file.type;
-    
-    // Update icon based on file type
-    const extension = file.name.split('.').pop().toLowerCase();
-    switch (extension) {
-        case 'pdf':
-            fileIcon.className = 'fas fa-file-pdf fa-2x text-danger';
-            break;
-        case 'doc':
-        case 'docx':
-            fileIcon.className = 'fas fa-file-word fa-2x text-primary';
-            break;
-        case 'txt':
-            fileIcon.className = 'fas fa-file-alt fa-2x text-secondary';
-            break;
-        default:
-            fileIcon.className = 'fas fa-file fa-2x text-muted';
-    }
-}
-
-function formatFileSize(bytes) {
-    if (bytes === 0) return '0 Bytes';
-    const k = 1024;
-    const sizes = ['Bytes', 'KB', 'MB', 'GB'];
-    const i = Math.floor(Math.log(bytes) / Math.log(k));
-    return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
-}
-
-function clearFile() {
-    fileInput.value = '';
-    uploadPrompt.classList.remove('d-none');
-    filePreview.classList.add('d-none');
-    updateUploadButton();
-}
-
-function updateUploadButton() {
-    const hasFile = fileInput.files.length > 0;
-    const hasClassification = document.querySelector('input[name="classification"]:checked');
-    const hasTitle = document.getElementById('title').value.trim();
-    
-    uploadBtn.disabled = !(hasFile && hasClassification && hasTitle);
-}
-
-// Classification selection
-document.querySelectorAll('.classification-selector').forEach(selector => {
-    selector.addEventListener('click', () => {
-        // Remove selected class from all
-        document.querySelectorAll('.classification-selector').forEach(s => s.classList.remove('selected'));
-        
-        // Add to clicked one
-        selector.classList.add('selected');
-        
-        // Check the radio button
-        const radio = selector.querySelector('input[type="radio"]');
-        radio.checked = true;
-        
-        updateUploadButton();
-    });
-});
-
-// Form validation
-document.getElementById('title').addEventListener('input', updateUploadButton);
-
-// Form submission
-uploadForm.addEventListener('submit', function(e) {
-    e.preventDefault();
-    
-    if (!validateForm()) {
-        return;
-    }
-    
-    uploadDocument();
-});
-
-function validateForm() {
-    const file = fileInput.files[0];
-    const classification = document.querySelector('input[name="classification"]:checked');
-    const title = document.getElementById('title').value.trim();
-    
-    if (!file) {
-        alert('Please select a file to upload');
-        return false;
-    }
-    
-    if (!classification) {
-        alert('Please select a classification level');
-        return false;
-    }
-    
-    if (!title) {
-        alert('Please enter a document title');
-        return false;
-    }
-    
-    return true;
-}
-
-async function uploadDocument() {
-    const uploadBtn = document.getElementById('upload-btn');
-    const uploadText = uploadBtn.querySelector('.upload-text');
-    const uploadSpinner = uploadBtn.querySelector('.upload-spinner');
-    const progressBar = document.getElementById('upload-progress-bar');
-    const progress = document.getElementById('upload-progress');
-    
-    // Show loading state
-    uploadText.classList.add('d-none');
-    uploadSpinner.classList.remove('d-none');
-    uploadBtn.disabled = true;
-    progress.classList.remove('d-none');
-    
-    try {
-        const formData = new FormData(uploadForm);
-        
-        const xhr = new XMLHttpRequest();
-        
-        // Upload progress
-        xhr.upload.addEventListener('progress', (e) => {
-            if (e.lengthComputable) {
-                const percentComplete = (e.loaded / e.total) * 100;
-                progressBar.style.width = percentComplete + '%';
-            }
-        });
-        
-        xhr.onload = function() {
-            if (xhr.status === 200) {
-                const response = JSON.parse(xhr.responseText);
-                if (response.success) {
-                    // Success - redirect to document view
-                    window.location.href = response.redirect_url || '/documents';
-                } else {
-                    alert('Upload failed: ' + response.message);
-                    resetUploadButton();
-                }
-            } else {
-                alert('Upload failed. Please try again.');
-                resetUploadButton();
-            }
-        };
-        
-        xhr.onerror = function() {
-            alert('Upload failed. Please check your connection and try again.');
-            resetUploadButton();
-        };
-        
-        xhr.open('POST', uploadForm.action);
-        xhr.send(formData);
-        
-    } catch (error) {
-        console.error('Upload error:', error);
-        alert('Upload failed: ' + error.message);
-        resetUploadButton();
-    }
-}
-
-function resetUploadButton() {
-    const uploadBtn = document.getElementById('upload-btn');
-    const uploadText = uploadBtn.querySelector('.upload-text');
-    const uploadSpinner = uploadBtn.querySelector('.upload-spinner');
-    const progress = document.getElementById('upload-progress');
-    
-    uploadText.classList.remove('d-none');
-    uploadSpinner.classList.add('d-none');
-    uploadBtn.disabled = false;
-    progress.classList.add('d-none');
-}
-
-function resetForm() {
-    uploadForm.reset();
-    clearFile();
-    document.querySelectorAll('.classification-selector').forEach(s => s.classList.remove('selected'));
-    updateUploadButton();
-}
-
-// Auto-save draft (optional)
-let saveTimeout;
-function autoSaveDraft() {
-    clearTimeout(saveTimeout);
-    saveTimeout = setTimeout(() => {
-        const formData = new FormData(uploadForm);
-        // Save to localStorage or send to server
-        // Implementation depends on requirements
-    }, 2000);
-}
-
-// Add auto-save listeners
-document.getElementById('title').addEventListener('input', autoSaveDraft);
-document.getElementById('description').addEventListener('input', autoSaveDraft);
-</script>
-
 {% endblock %}
