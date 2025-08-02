@@ -15,6 +15,11 @@ import sys
 # Import Identus integration
 from identus_wrapper import identus_client
 
+from config import get_config, get_flask_config
+
+config = get_config()
+app.config.update(get_flask_config())
+
 app = Flask(__name__)
 CORS(app)
 
