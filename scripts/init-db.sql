@@ -119,9 +119,23 @@ CREATE TRIGGER update_users_updated_at BEFORE UPDATE ON users
 CREATE TRIGGER update_documents_updated_at BEFORE UPDATE ON documents 
     FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
 
+-- Create pollux application user for Identus agents
+CREATE USER "pollux-application-user" WITH PASSWORD 'pollux_pass';
+
+-- Grant identus_user admin privileges so it can create roles if needed
+ALTER USER identus_user CREATEDB CREATEROLE;
+
 -- Grant necessary permissions
 GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA public TO identus_user;
 GRANT ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA public TO identus_user;
+GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA public TO "pollux-application-user";
+GRANT ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA public TO "pollux-application-user";
+
+-- Grant future table/sequence privileges as well
+ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON TABLES TO identus_user;
+ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON SEQUENCES TO identus_user;
+ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON TABLES TO "pollux-application-user";
+ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON SEQUENCES TO "pollux-application-user";
 
 -- Completion message
 DO $$
