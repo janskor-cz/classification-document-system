@@ -17,7 +17,7 @@ identus_config = get_identus_config()
 
 class IdentusConfig:
     """Configuration for Identus Cloud Agent"""
-    def __init__(self, base_url: str = "http://localhost:8000", api_key: Optional[str] = None):
+    def __init__(self, base_url: str = "http://localhost:8080", api_key: Optional[str] = None):
         self.base_url = base_url
         self.api_key = api_key
         self.timeout = 30
@@ -30,16 +30,16 @@ class IdentusDashboardClient:
         if os.getenv('CODESPACES'):
             print("🌐 Detected GitHub Codespaces environment")
             # In Codespaces, use localhost with port forwarding
-            self.issuer_url = "http://localhost:8000/cloud-agent"
-            self.holder_url = "http://localhost:7000/cloud-agent"
-            self.verifier_url = "http://localhost:9000/cloud-agent"
+            self.issuer_url = "http://localhost:8080"
+            self.holder_url = "http://localhost:7000"
+            self.verifier_url = "http://localhost:9000"
             self.bridge_ip = "127.0.0.1"
         else:
             print("🏠 Detected local development environment")
             # Local development configuration
-            self.issuer_url = "http://localhost:8000/cloud-agent"
-            self.holder_url = "http://localhost:7000/cloud-agent"
-            self.verifier_url = "http://localhost:9000/cloud-agent"
+            self.issuer_url = "http://localhost:8080"
+            self.holder_url = "http://localhost:7000"
+            self.verifier_url = "http://localhost:9000"
             self.bridge_ip = "172.17.0.1"
         
         # Initialize connection state
@@ -185,7 +185,7 @@ class IdentusDashboardClient:
             # Use the first available schema
             first_schema = schemas_response['contents'][0]
             schema_guid = first_schema['guid']
-            schema_uri = f"http://{self.bridge_ip}:8000/cloud-agent/schema-registry/schemas/{schema_guid}"
+            schema_uri = f"http://{self.bridge_ip}:8080/schema-registry/schemas/{schema_guid}"
             
             print(f"✅ Using existing schema: {first_schema.get('name', 'Unknown')}")
             return schema_uri
@@ -226,7 +226,7 @@ class IdentusDashboardClient:
             
             schema_response = self._make_request(self.issuer_url, 'POST', '/schema-registry/schemas', schema_data)
             schema_guid = schema_response['guid']
-            schema_uri = f"http://{self.bridge_ip}:8000/cloud-agent/schema-registry/schemas/{schema_guid}"
+            schema_uri = f"http://{self.bridge_ip}:8080/schema-registry/schemas/{schema_guid}"
             
             print(f"✅ Created new schema: {schema_uri}")
             return schema_uri
