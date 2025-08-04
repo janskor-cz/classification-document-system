@@ -188,7 +188,7 @@ def initialize_identus():
                 load_real_identus_data()  # Will use demo data
         else:
             print("⚠️ Identus agents not running. Dashboard will work with demo data only.")
-            print("💡 Start your Identus agents on ports 8000 and 9000 for real credential issuance.")
+            print("💡 Start your Identus agents on ports 8080, 7000, and 9000 for real credential issuance.")
             load_real_identus_data()  # Will use demo data
     except Exception as e:
         print(f"⚠️ Identus initialization error: {e}")
@@ -501,7 +501,7 @@ def system_status():
         
         # Add additional diagnostic info
         if not agents_healthy:
-            status_info['message'] = 'Identus agents not responding on ports 8000/9000'
+            status_info['message'] = 'Identus agents not responding on ports 8080/7000/9000'
         elif not initialized:
             status_info['message'] = 'Identus agents running but not initialized'
         else:
@@ -536,7 +536,7 @@ def identus_status():
         
         # Add additional diagnostic info
         if not agents_healthy:
-            status_info['message'] = 'Identus agents not responding on ports 8000/9000'
+            status_info['message'] = 'Identus agents not responding on ports 8080/7000/9000'
         elif not initialized:
             status_info['message'] = 'Identus agents running but not initialized'
         else:
@@ -851,7 +851,7 @@ if __name__ == '__main__':
     print("  • Real-time status monitoring")
     print("  • Configuration management")
     print("")
-    print("💡 Make sure your Identus agents are running on ports 7000, 8000, and 9000")
+    print("💡 Make sure your Identus agents are running on ports 8080, 7000, and 9000")
     print("💡 Press Ctrl+C to stop the server")
     print("=" * 60)
     
