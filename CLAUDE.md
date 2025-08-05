@@ -132,12 +132,13 @@ The application uses environment-based configuration with three modes:
 
 ### Key Environment Variables
 
-Copy `.env.example` to `.env` and configure:
+Copy `.env.example` to `.env` and configure (note: `.env.example` was deleted, create as needed):
 - `FLASK_ENV` - Environment mode (development/testing/production)
 - `DATABASE_URL` - Database connection string
 - `SECRET_KEY` / `JWT_SECRET_KEY` - Security keys for sessions/tokens
 - `IDENTUS_ISSUER_URL` - Identus issuer agent endpoint (http://localhost:8080/cloud-agent)
 - `UPLOAD_FOLDER` - Document storage location
+- `CODESPACES` - Auto-detected in GitHub Codespaces for environment configuration
 
 ### Classification Levels
 
@@ -176,6 +177,18 @@ Key patterns to follow:
 - Use the Identus client for credential operations
 - Maintain classification level access controls
 
+### Testing and Code Quality
+
+**Note**: No formal testing framework is currently configured. For testing:
+- Manual testing via Flask development server
+- Use health check endpoints for integration testing
+- Test Identus integration via status endpoints
+
+**Code Quality**:
+- No linting tools configured (consider adding flake8, black, or pylint)
+- Follow PEP 8 conventions manually
+- Use type hints where appropriate (some files already use typing module)
+
 ### Debugging Identus Issues
 
 **Quick Status Check**:
@@ -200,6 +213,9 @@ curl http://localhost:8080/_system/health
 - **Host networking**: Required - custom Docker networks don't work
 - **Multiple databases**: Agent requires `pollux`, `connect`, `agent`, `node_db` databases
 - **Vault required**: Agent needs Vault for secrets management
+- **GitHub Codespaces**: System auto-detects Codespaces environment and configures accordingly
+- **Configuration URLs**: Use port 8080 for agent HTTP, port 8090 for DIDComm
+- **Database connection**: Flask app can run without Identus; only credential operations require working agent
 
 ## Security Considerations
 
@@ -240,6 +256,9 @@ PG_PORT=5432
 PG_DATABASE=identus_db
 PG_USERNAME=postgres
 PG_PASSWORD=postgres
+AGENT_HTTP_PORT=8080
+AGENT_DIDCOMM_PORT=8090
+AGENT_HTTP_ENDPOINT="http://localhost:8080"
 VAULT_DEV_ROOT_TOKEN_ID=root
 VAULT_ADDR=http://localhost:8200
 VAULT_TOKEN=root
