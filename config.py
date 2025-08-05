@@ -23,7 +23,7 @@ except ImportError:
 @dataclass
 class IdentusConfig:
     """Configuration for Hyperledger Identus agents"""
-    issuer_url: str = "http://localhost:8000/cloud-agent"
+    issuer_url: str = "http://localhost:8080/cloud-agent"
     holder_url: str = "http://localhost:7000/cloud-agent"
     verifier_url: str = "http://localhost:9000/cloud-agent"
     bridge_ip: str = "172.17.0.1"
@@ -146,7 +146,7 @@ class Config:
         self.audit.log_level = "DEBUG"
         
         # Use local Identus agents
-        self.identus.issuer_url = "http://localhost:8000/cloud-agent"
+        self.identus.issuer_url = "http://localhost:8080/cloud-agent"
         self.identus.holder_url = "http://localhost:7000/cloud-agent"
         self.identus.verifier_url = "http://localhost:9000/cloud-agent"
     
@@ -158,9 +158,9 @@ class Config:
         self.audit.enable_audit_logging = False
         
         # Use test Identus agents (if available)
-        self.identus.issuer_url = "http://localhost:18000/cloud-agent"
-        self.identus.holder_url = "http://localhost:17000/cloud-agent"
-        self.identus.verifier_url = "http://localhost:19000/cloud-agent"
+        self.identus.issuer_url = "http://localhost:8080/cloud-agent"
+        self.identus.holder_url = "http://localhost:7000/cloud-agent" 
+        self.identus.verifier_url = "http://localhost:9000/cloud-agent"
     
     def _load_production_config(self):
         """Production environment configuration"""

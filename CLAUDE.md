@@ -51,6 +51,19 @@ source venv/bin/activate  # Linux/Mac
 venv\Scripts\activate     # Windows
 ```
 
+### Development and Testing
+
+```bash
+# Run Flask application in development mode
+export FLASK_ENV=development
+python app.py
+
+# Check application health
+curl http://localhost:5000/health
+
+# No formal test suite exists - testing is manual via web interface and API endpoints
+```
+
 ### Service Health Checks
 
 ```bash
@@ -119,6 +132,12 @@ The system uses PostgreSQL with these main tables:
 - **Vault**: Development mode for secrets management
 - **Host Networking**: Required for proper agent connectivity
 
+**Integration Architecture**:
+- `identus_wrapper.py` - Main integration client with auto-environment detection (Codespaces vs local)
+- Supports both local development and GitHub Codespaces environments
+- Auto-initializes DIDs and schemas on startup
+- Handles credential lifecycle: schema creation, DID management, credential issuance
+
 Credentials are issued with a custom schema for data labeler certification containing fields like `fullName`, `email`, `specialization`, `experienceLevel`, and `labelerID`.
 
 ## Configuration
@@ -132,12 +151,14 @@ The application uses environment-based configuration with three modes:
 
 ### Key Environment Variables
 
-Copy `.env.example` to `.env` and configure:
+**Note**: No `.env.example` file exists. Environment variables are handled via OS environment or defaults in `config.py`:
+
 - `FLASK_ENV` - Environment mode (development/testing/production)
 - `DATABASE_URL` - Database connection string
 - `SECRET_KEY` / `JWT_SECRET_KEY` - Security keys for sessions/tokens
-- `IDENTUS_ISSUER_URL` - Identus issuer agent endpoint (http://localhost:8080/cloud-agent)
+- `IDENTUS_ISSUER_URL` - Identus issuer agent endpoint (http://localhost:8080/cloud-agent)  
 - `UPLOAD_FOLDER` - Document storage location
+- `CODESPACES` - Auto-detected for GitHub Codespaces environment
 
 ### Classification Levels
 
@@ -170,11 +191,13 @@ The system uses raw SQL migrations in `scripts/init-db.sql`. For schema changes:
 ### Adding New Features
 
 Key patterns to follow:
-- Use environment-aware configuration from `config.py`
+- Use environment-aware configuration from `config.py` with dataclass-based config management
 - Add audit logging for security-sensitive operations
-- Follow Flask blueprint patterns for route organization
-- Use the Identus client for credential operations
+- Follow Flask blueprint patterns for route organization (currently monolithic in `app.py`)
+- Use the Identus client from `identus_wrapper.py` for credential operations
 - Maintain classification level access controls
+- Frontend uses Bootstrap 5 + vanilla JavaScript (no modern build tools)
+- Templates use Jinja2 with base template inheritance pattern
 
 ### Debugging Identus Issues
 
@@ -245,6 +268,14 @@ VAULT_ADDR=http://localhost:8200
 VAULT_TOKEN=root
 ```
 
+### Current Inconsistencies
+
+**Port Configuration**: Documentation and code have inconsistent port references:
+- CLAUDE.md references ports: 8000 (issuer), 7000 (holder), 9000 (verifier)  
+- `docker-compose.yml` uses port 8000 for issuer
+- Working scripts use port 8080 for issuer
+- **Actual working setup**: Use port 8080 as defined in working scripts
+
 ### Script Locations
 
 Working Identus management scripts in `./scripts/`:
@@ -252,6 +283,21 @@ Working Identus management scripts in `./scripts/`:
 - `check-identus-status.sh` - Health check for agents
 - `stop-identus-agents.sh` - Stop all agents
 - `init-db.sql` - Database initialization for Flask app
+
+## Technology Stack
+
+### Core Dependencies
+- **Flask 2.3.3** - Web framework with CORS support
+- **SQLAlchemy 2.0.21** - Database ORM (supports SQLite, PostgreSQL)
+- **Requests 2.31.0** - HTTP client for Identus API integration
+- **Cryptography 41.0.4** + **Bcrypt 4.0.1** - Security and password hashing
+
+### Development Dependencies
+- **python-dotenv 1.0.0** - Environment variable management
+- **qrcode[pil] 7.4.2** - QR code generation for credentials
+
+### No Testing Framework
+The project currently has no formal testing setup (no pytest, unittest, or similar). Testing is performed manually through the web interface and direct API calls.
 
 ### Migration from Docker Compose
 
