@@ -20,8 +20,8 @@ echo ""
 # Clean up function
 cleanup() {
     echo -e "${YELLOW}🧹 Cleaning up holder containers...${NC}"
-    sudo docker stop holder-postgres holder-vault holder-agent 2>/dev/null || true
-    sudo docker rm holder-postgres holder-vault holder-agent 2>/dev/null || true
+    sudo docker stop holder-vault holder-agent 2>/dev/null || true
+    sudo docker rm holder-vault holder-agent 2>/dev/null || true
 }
 
 # Setup PostgreSQL with required configuration
@@ -130,7 +130,7 @@ start_holder_agent() {
         -e AGENT_VERSION=1.33.0 \
         -e PORT=7000 \
         -e PG_HOST=localhost \
-        -e PG_PORT=5433 \
+        -e PG_PORT=5432 \
         -e PG_DATABASE=holder_identus_db \
         -e PG_USERNAME=postgres \
         -e PG_PASSWORD=postgres \
@@ -241,7 +241,7 @@ main() {
     sleep 2
     
     # Setup components step by step
-    if setup_postgresql; then
+    if true; then  # Skip PostgreSQL setup, use shared from issuer
         if setup_vault; then
             start_holder_agent
             

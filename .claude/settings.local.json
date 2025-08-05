@@ -156,7 +156,10 @@
       "Bash(-e AGENT_HTTP_ENDPOINT=\"http://localhost:8080\" )",
       "Bash(-e VAULT_DEV_ROOT_TOKEN_ID=root )",
       "Bash(-e VAULT_ADDR=http://localhost:8200 )",
-      "Bash(-e VAULT_TOKEN=root )"
+      "Bash(-e VAULT_TOKEN=root )",
+      "Bash(-e PG_HOST=verifier-postgres )",
+      "Bash(-e PG_PORT=5432 )",
+      "Bash(alpine sh:*)"
     ],
     "deny": []
   }
