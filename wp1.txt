@@ -1,0 +1,1055 @@
+**Update user session structure**:
+
+```python
+current_user = {
+    'is_authenticated': True,
+    'user_id': 123,
+    'email': 'user@company.com',
+    'enterprise_account_name': 'ACME_CORP',  # Enterprise account used as salt
+    'enterprise_account_display': 'ACME Corporation',
+    'identity_hash': 'a1b2c3d4e5f6...',  # Generated with enterprise account as salt
+    'identity_hash_display': 'a1b2c3d4...',  # First 8 chars for display
+    'full_name': 'John Doe',
+    'department': 'Engineering',
+    'job_title': 'Senior Developer',
+    'employee_id': 'EMP-001',
+    
+    # Two-stage credential system
+    'has_enterprise_credential': True,  # Basic enterprise access
+    'classification_credentials': {
+        'public': {'status': 'issued', 'level':# Working Package 1: Registration Authority with Email/Password Hash Authentication
+
+## Overview
+This package implements the complete Registration Authority workflow using traditional email/password authentication with cryptographic hashing. Users authenticate with email/password, request enterprise and classification credentials through approval workflow, and the system controls both document classification and access based on user's credential levels.
+
+## Architecture
+```
+User (Email/Password) → Flask App → Registration Authority (Identus Agent) → Credentials Issued
+                                                    ↑
+                        Enterprise Account Management + Classification Control
+```
+
+**Authentication Method**: `SHA256(email + password + enterprise_account_name)` creates deterministic user identifier
+**Enterprise Salt**: Enterprise account name acts as salt (e.g., "ACME_CORP", "TECH_DIVISION")  
+**Corporate Custody**: Registration Authority can recover user identity using enterprise account name
+**Credential Types**: Enterprise Credential (basic access) + Classification Credentials (document labeling/access)
+**Agent Used**: Existing Identus Issuer Agent (port 8080)
+
+## Document Classification Control Model
+
+### **Two-Stage Credential System**:
+
+#### **Stage 1: Enterprise Credential** (Foundation)
+- **Purpose**: Basic employee verification and system access
+- **Required for**: Login to system, basic operations
+- **Process**: User registers → Requests enterprise credential → Admin approval → Issued by RA
+
+#### **Stage 2: Classification Credentials** (Document Control)
+- **Public Classification Credential**: Can label/access Public documents
+- **Internal Classification Credential**: Can label/access Public + Internal documents  
+- **Confidential Classification Credential**: Can label/access Public + Internal + Confidential documents
+- **Process**: User requests → Business justification → Admin approval → Issued by RA
+
+### **Document Control Rules**:
+- **Document Upload**: User can only classify documents UP TO their highest classification credential level
+- **Document Access**: User can only access documents AT their exact classification credential level
+- **No Over-Classification**: System prevents users from labeling documents above their authorization
+
+## Implementation Tasks for Claude Agent
+
+### Phase 1: Enhanced User Management with Cryptographic Identity
+
+#### Task 1.1: Update Database Schema
+**File**: `scripts/init-db.sql`
+**Add new tables**:
+
+```sql
+-- Enhanced user management with enterprise account salt
+CREATE TABLE enterprise_accounts (
+    id SERIAL PRIMARY KEY,
+    account_name VARCHAR(100) UNIQUE NOT NULL, -- Used as salt, e.g., "ACME_CORP"
+    account_display_name VARCHAR(255) NOT NULL, -- e.g., "ACME Corporation"
+    description TEXT,
+    is_active BOOLEAN DEFAULT true,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Insert default enterprise account
+INSERT INTO enterprise_accounts (account_name, account_display_name, description) 
+VALUES ('DEFAULT_ENTERPRISE', 'Default Enterprise Account', 'Default enterprise account for credential management');
+
+CREATE TABLE users (
+    id SERIAL PRIMARY KEY,
+    email VARCHAR(255) UNIQUE NOT NULL,
+    password_hash VARCHAR(255) NOT NULL,
+    enterprise_account_id INTEGER REFERENCES enterprise_accounts(id) NOT NULL,
+    enterprise_account_name VARCHAR(100) NOT NULL, -- Denormalized for performance
+    identity_hash VARCHAR(64) UNIQUE NOT NULL, -- SHA256(email+password+enterprise_account_name)
+    full_name VARCHAR(255) NOT NULL,
+    department VARCHAR(100),
+    job_title VARCHAR(100),
+    employee_id VARCHAR(50),
+    is_active BOOLEAN DEFAULT true,
+    has_enterprise_credential BOOLEAN DEFAULT false, -- Track if user has basic enterprise credential
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (enterprise_account_name) REFERENCES enterprise_accounts(account_name)
+);
+
+-- Two-stage credential requests: Enterprise + Classification
+CREATE TABLE credential_requests (
+    id SERIAL PRIMARY KEY,
+    user_id INTEGER REFERENCES users(id),
+    identity_hash VARCHAR(64) NOT NULL,
+    enterprise_account_name VARCHAR(100) NOT NULL,
+    credential_category VARCHAR(50) NOT NULL, -- 'enterprise', 'classification'
+    credential_type VARCHAR(50) NOT NULL, -- 'basic_enterprise', 'public', 'internal', 'confidential'
+    status VARCHAR(50) DEFAULT 'pending', -- 'pending', 'approved', 'denied'
+    business_justification TEXT,
+    department_approval VARCHAR(100),
+    requested_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    processed_at TIMESTAMP,
+    processed_by VARCHAR(100),
+    denial_reason TEXT,
+    identus_record_id VARCHAR(500), -- Identus credential record ID when issued
+    UNIQUE(identity_hash, credential_type)
+);
+
+-- Track issued credentials with classification levels
+CREATE TABLE issued_credentials (
+    id SERIAL PRIMARY KEY,
+    user_id INTEGER REFERENCES users(id),
+    identity_hash VARCHAR(64) NOT NULL,
+    enterprise_account_name VARCHAR(100) NOT NULL,
+    credential_category VARCHAR(50) NOT NULL, -- 'enterprise', 'classification'
+    credential_type VARCHAR(50) NOT NULL, -- 'basic_enterprise', 'public', 'internal', 'confidential'
+    classification_level INTEGER, -- NULL for enterprise, 1=public, 2=internal, 3=confidential
+    identus_record_id VARCHAR(500) NOT NULL,
+    invitation_url TEXT,
+    credential_claims JSONB,
+    status VARCHAR(50) DEFAULT 'issued', -- 'issued', 'revoked', 'expired'
+    issued_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    expires_at TIMESTAMP,
+    revoked_at TIMESTAMP,
+    revocation_reason TEXT
+);
+
+-- Enhanced documents table with classification control
+CREATE TABLE documents (
+    id SERIAL PRIMARY KEY,
+    title VARCHAR(255) NOT NULL,
+    filename VARCHAR(255) NOT NULL,
+    file_path VARCHAR(500) NOT NULL,
+    file_size BIGINT,
+    mime_type VARCHAR(100),
+    classification_level INTEGER NOT NULL, -- 1=public, 2=internal, 3=confidential
+    classification_label VARCHAR(50) NOT NULL, -- 'public', 'internal', 'confidential'
+    created_by_user_id INTEGER REFERENCES users(id),
+    created_by_identity_hash VARCHAR(64) NOT NULL,
+    creator_max_classification_level INTEGER NOT NULL, -- User's max classification level when created
+    enterprise_account_name VARCHAR(100) NOT NULL,
+    is_encrypted BOOLEAN DEFAULT false,
+    encryption_key_id VARCHAR(100),
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Document access attempts log
+CREATE TABLE document_access_log (
+    id SERIAL PRIMARY KEY,
+    document_id INTEGER REFERENCES documents(id),
+    user_id INTEGER REFERENCES users(id),
+    identity_hash VARCHAR(64) NOT NULL,
+    enterprise_account_name VARCHAR(100) NOT NULL,
+    access_type VARCHAR(50) NOT NULL, -- 'view', 'download'
+    document_classification_level INTEGER NOT NULL,
+    user_classification_level INTEGER, -- User's classification level at time of access
+    access_granted BOOLEAN NOT NULL,
+    denial_reason TEXT,
+    accessed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Audit trail for all credential operations
+CREATE TABLE credential_audit_log (
+    id SERIAL PRIMARY KEY,
+    user_id INTEGER REFERENCES users(id),
+    identity_hash VARCHAR(64),
+    enterprise_account_name VARCHAR(100),
+    action VARCHAR(100) NOT NULL, -- 'request', 'approve', 'deny', 'issue', 'revoke', 'recover'
+    credential_category VARCHAR(50), -- 'enterprise', 'classification'
+    credential_type VARCHAR(50),
+    details JSONB,
+    performed_by VARCHAR(100),
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Recovery requests for lost credentials
+CREATE TABLE credential_recovery_requests (
+    id SERIAL PRIMARY KEY,
+    email VARCHAR(255) NOT NULL,
+    enterprise_account_name VARCHAR(100) NOT NULL,
+    recovery_type VARCHAR(50) DEFAULT 'lost_password', -- 'lost_password', 'account_locked'
+    recovery_token VARCHAR(64),
+    token_expires_at TIMESTAMP,
+    status VARCHAR(50) DEFAULT 'pending', -- 'pending', 'approved', 'denied', 'completed'
+    requested_by_admin BOOLEAN DEFAULT false,
+    approved_by VARCHAR(100),
+    completed_at TIMESTAMP,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Helper function to get user's maximum classification level
+CREATE OR REPLACE FUNCTION get_user_max_classification_level(user_identity_hash VARCHAR(64))
+RETURNS INTEGER AS $
+DECLARE
+    max_level INTEGER := 0;
+BEGIN
+    SELECT COALESCE(MAX(classification_level), 0)
+    INTO max_level
+    FROM issued_credentials 
+    WHERE identity_hash = user_identity_hash 
+    AND credential_category = 'classification' 
+    AND status = 'issued'
+    AND (expires_at IS NULL OR expires_at > NOW());
+    
+    RETURN max_level;
+END;
+$ LANGUAGE plpgsql;
+```
+
+#### Task 1.2: Enhanced User Authentication System
+**File**: `app.py` - Update authentication logic
+
+**New Functions to Implement**:
+```python
+import hashlib
+import secrets
+from datetime import datetime, timedelta
+
+def generate_identity_hash(email: str, password: str, enterprise_account_name: str) -> str:
+    """Generate deterministic identity hash using enterprise account as salt"""
+    combined = f"{email.lower().strip()}{password}{enterprise_account_name}"
+    return hashlib.sha256(combined.encode()).hexdigest()
+
+def create_user_account(email: str, password: str, full_name: str, 
+                       enterprise_account_name: str = "DEFAULT_ENTERPRISE",
+                       department: str = None, job_title: str = None, 
+                       employee_id: str = None) -> dict:
+    """Create new user with enterprise account-based identity"""
+    # Validate enterprise account exists
+    # Generate identity hash using enterprise account name as salt
+    # Implementation needed
+
+def authenticate_user(email: str, password: str, 
+                     enterprise_account_name: str = None) -> dict:
+    """Authenticate user with enterprise account validation"""
+    # If enterprise_account_name not provided, look it up by email
+    # Generate identity hash and verify against stored hash
+    # Implementation needed
+
+def recover_user_identity(email: str, new_password: str, 
+                         enterprise_account_name: str, 
+                         admin_authorization: str) -> dict:
+    """Registration Authority recovery of lost user credentials"""
+    # Verify admin authorization
+    # Regenerate identity hash with new password
+    # Update user record
+    # Re-issue credentials if needed
+    # Log recovery action
+    # Implementation needed
+
+def get_enterprise_account_info(account_name: str) -> dict:
+    """Get enterprise account information"""
+    # Implementation needed
+
+def list_enterprise_users(enterprise_account_name: str, 
+                         include_inactive: bool = False) -> list:
+    """List all users under enterprise account"""
+    # For admin management of enterprise accounts
+    # Implementation needed
+```
+
+**New Routes to Implement**:
+```python
+@app.route('/register', methods=['GET', 'POST'])
+def register():
+    """User registration page with enterprise account selection"""
+    # Show available enterprise accounts
+    # Process registration with enterprise account validation
+    # Implementation needed
+
+@app.route('/auth/login', methods=['POST']) 
+def enhanced_login():
+    """Enhanced login with enterprise account validation"""
+    # Support login with or without explicit enterprise account
+    # Auto-detect enterprise account from email if not provided
+    # Implementation needed
+
+@app.route('/api/user/profile')
+def get_user_profile():
+    """Get current user profile including enterprise account info"""
+    # Implementation needed
+
+@app.route('/api/enterprise/accounts', methods=['GET'])
+def get_enterprise_accounts():
+    """Get available enterprise accounts for registration"""
+    # Return list of active enterprise accounts
+    # Implementation needed
+
+@app.route('/admin/enterprise/accounts', methods=['GET', 'POST'])
+def manage_enterprise_accounts():
+    """Administrative management of enterprise accounts"""
+    # CRUD operations for enterprise accounts
+    # Implementation needed
+
+@app.route('/admin/recovery/request', methods=['POST'])
+def admin_recovery_request():
+    """Admin-initiated credential recovery for lost user access"""
+    # Allow admin to recover user access using enterprise account
+    # Generate recovery token
+    # Reset user credentials with RA control
+    # Implementation needed
+```
+
+#### Task 1.3: Registration Authority Integration
+**File**: `identus_wrapper.py` - Enhance for email-based credentials
+
+**New Methods to Implement**:
+```python
+class IdentusDashboardClient:
+    
+    def issue_enterprise_based_credential(self, identity_hash: str, 
+                                        enterprise_account_name: str,
+                                        user_info: dict, 
+                                        credential_type: str) -> dict:
+        """Issue credential to enterprise-managed identity"""
+        # Create credential claims using identity hash and enterprise account
+        claims = {
+            "identityHash": identity_hash,
+            "enterpriseAccount": enterprise_account_name,
+            "email": user_info['email'],
+            "fullName": user_info['full_name'],
+            "department": user_info.get('department', ''),
+            "credentialType": credential_type,
+            "issuedAt": datetime.now().isoformat(),
+            "expiresAt": (datetime.now() + timedelta(days=365)).isoformat()
+        }
+        
+        # Issue via Identus issuer agent with enterprise account management
+        # Implementation needed
+        
+    def recover_enterprise_credentials(self, email: str, 
+                                     enterprise_account_name: str,
+                                     new_identity_hash: str,
+                                     admin_auth_token: str) -> dict:
+        """Registration Authority recovery of lost user credentials"""
+        # Verify admin authorization
+        # Revoke old credentials (if any can be found)
+        # Re-issue all approved credentials to new identity hash
+        # Update enterprise account records
+        # Implementation needed
+        
+    def verify_enterprise_based_credential(self, identity_hash: str,
+                                         enterprise_account_name: str,
+                                         credential_type: str) -> dict:
+        """Verify if user has valid credential for classification level"""
+        # Verify both identity hash and enterprise account ownership
+        # Implementation needed
+        
+    def list_enterprise_credentials(self, enterprise_account_name: str) -> list:
+        """Get all credentials issued under enterprise account"""
+        # For admin oversight of enterprise account credentials
+        # Implementation needed
+        
+    def revoke_credential_with_enterprise_auth(self, record_id: str, 
+                                             enterprise_account_name: str,
+                                             reason: str,
+                                             admin_auth: str) -> bool:
+        """Revoke credential with enterprise account authority"""
+        # Implementation needed
+```
+
+### Phase 2: Two-Stage Credential Request and Approval Workflow
+
+#### Task 2.1: Enterprise Credential Request Interface
+**File**: `frontend/templates/credentials/enterprise-request.html`
+**Create enterprise credential request template with**:
+
+- User status display (identity hash, enterprise account)
+- Enterprise credential request form
+- Business justification for employee verification
+- Department/manager approval section
+- Request status tracking
+
+#### Task 2.2: Classification Credential Request Interface  
+**File**: `frontend/templates/credentials/classification-request.html`
+**Create classification credential request template with**:
+
+- Prerequisites check (must have enterprise credential first)
+- Three classification levels with descriptions:
+  - **Public**: Can label/access public documents
+  - **Internal**: Can label/access public + internal documents  
+  - **Confidential**: Can label/access public + internal + confidential documents
+- Business justification text area for each requested level
+- Current classification level display
+- Request history table with status
+
+#### Task 2.3: Document Upload with Classification Control
+**File**: `frontend/templates/documents/upload.html`
+**Enhanced upload interface with**:
+
+- User's maximum classification level display
+- Classification dropdown limited to user's credential level
+- Classification level descriptions and restrictions
+- Warning messages for classification level selection
+- Preview of document classification before upload
+
+#### Task 2.4: Credential Request Processing
+**File**: `app.py` - Add two-stage credential request routes
+
+**Routes to Implement**:
+```python
+@app.route('/credentials/enterprise/request', methods=['GET', 'POST'])
+def enterprise_credential_request():
+    """Enterprise credential request page and processing"""
+    # Check user authentication
+    # Show enterprise credential request form
+    # Process enterprise credential requests
+    # Implementation needed
+
+@app.route('/credentials/classification/request', methods=['GET', 'POST'])  
+def classification_credential_request():
+    """Classification credential request page and processing"""
+    # Check user has enterprise credential first
+    # Show classification credential request form
+    # Process classification credential requests
+    # Implementation needed
+
+@app.route('/api/credentials/request', methods=['POST'])
+def submit_credential_request():
+    """Submit new credential request (enterprise or classification)"""
+    # Validate user authentication and prerequisites
+    # Determine credential category and type
+    # Create credential request record
+    # Add to audit log
+    # Notify administrators
+    # Implementation needed
+
+@app.route('/api/user/max-classification-level', methods=['GET'])
+def get_user_max_classification_level():
+    """Get user's current maximum classification level"""
+    # Query user's issued classification credentials
+    # Return maximum classification level (0=none, 1=public, 2=internal, 3=confidential)
+    # Implementation needed
+
+@app.route('/api/credentials/my-requests', methods=['GET'])
+def get_my_credential_requests():
+    """Get user's credential request history (both enterprise and classification)"""
+    # Implementation needed
+
+@app.route('/api/credentials/my-issued', methods=['GET']) 
+def get_my_issued_credentials():
+    """Get user's issued credentials with classification levels"""
+    # Implementation needed
+```
+
+#### Task 2.5: Administrative Approval Interface
+**File**: `frontend/templates/admin/credential-applications.html`
+**Create admin interface with**:
+
+- **Two-Tab Interface**:
+  - **Enterprise Credential Requests**: Basic employee verification requests
+  - **Classification Credential Requests**: Document access level requests
+- **Enterprise Requests Section**:
+  - Pending enterprise credential requests
+  - User information (email, enterprise account, department)
+  - Employee verification workflow
+  - Approve/Deny buttons for enterprise access
+- **Classification Requests Section**:
+  - Pending classification credential requests grouped by level
+  - Prerequisites validation (must have enterprise credential)
+  - User information with current classification level
+  - Business justification review
+  - Approve/Deny buttons with classification level context
+- **Filtering and Management**:
+  - Quick filters (by credential type, enterprise account, department, date)
+  - Bulk approval capabilities for enterprise groups
+  - Enterprise account credential overview
+  - Lost credential recovery interface
+  - Audit trail view with enterprise account context
+
+#### Task 2.6: Administrative Processing Routes
+**File**: `app.py` - Add enhanced admin routes
+
+**Routes to Implement**:
+```python
+@app.route('/admin/credential-applications', methods=['GET'])
+def admin_credential_applications():
+    """Admin interface for two-stage credential approvals"""
+    # Check admin privileges
+    # Load pending applications separated by category
+    # Show enterprise and classification requests separately
+    # Implementation needed
+
+@app.route('/admin/credential-applications/enterprise', methods=['GET'])
+def admin_enterprise_credential_applications():
+    """Admin interface specifically for enterprise credential approvals"""
+    # Show pending enterprise credential requests
+    # Employee verification workflow
+    # Implementation needed
+
+@app.route('/admin/credential-applications/classification', methods=['GET'])
+def admin_classification_credential_applications():
+    """Admin interface specifically for classification credential approvals"""
+    # Show pending classification credential requests
+    # Validate prerequisites (enterprise credential exists)
+    # Show business justification and access level context
+    # Implementation needed
+
+@app.route('/api/admin/credential/<request_id>/approve', methods=['POST'])
+def approve_credential_request(request_id):
+    """Approve credential request (enterprise or classification)"""
+    # Validate admin privileges
+    # Check request type and prerequisites
+    # For classification requests: validate enterprise credential exists
+    # Update request status
+    # Issue credential via identus_client with proper categorization
+    # Update issued_credentials table with classification level
+    # Update user enterprise credential status if applicable
+    # Send notification to user
+    # Add audit log entry with enterprise account and classification context
+    # Implementation needed
+
+@app.route('/api/admin/credential/<request_id>/deny', methods=['POST'])
+def deny_credential_request(request_id):
+    """Deny credential request with reason"""
+    # Handle both enterprise and classification request denials
+    # Log denial reason and category
+    # Implementation needed
+```
+
+### Phase 3: Document Classification Control and Access Integration
+
+#### Task 3.1: Document Upload with Classification Level Control
+**File**: `app.py` - Enhance document upload with classification control
+
+**Enhanced Upload Logic**:
+```python
+@app.route('/documents/upload', methods=['POST'])
+def controlled_document_upload():
+    """Document upload with classification level control"""
+    # Verify user authentication and enterprise credential
+    # Get user's maximum classification level
+    # Validate requested classification level against user's credentials
+    # Prevent over-classification beyond user's authorization
+    # Process document upload with proper classification
+    # Apply classification-based encryption
+    # Log document creation with classification control info
+    # Implementation needed
+
+def get_user_allowed_classification_levels(identity_hash: str) -> list:
+    """Get classification levels user can apply to documents"""
+    # Get user's issued classification credentials
+    # Return list of allowed classification levels
+    # e.g., [1, 2] for user with Internal credential (can use Public + Internal)
+    # Implementation needed
+
+def validate_classification_request(user_identity_hash: str, 
+                                   requested_level: int) -> dict:
+    """Validate if user can classify document at requested level"""
+    # Check user's maximum classification credential
+    # Validate requested level is within user's authorization
+    # Return validation result with details
+    # Implementation needed
+```
+
+#### Task 3.2: Document Access with Classification Level Verification
+**New Routes to Implement**:
+```python
+@app.route('/documents/access/<doc_id>', methods=['GET'])
+def access_classified_document(doc_id):
+    """Access document with classification level verification"""
+    # Get document classification level
+    # Verify user has EXACT matching classification credential
+    # Check credential validity and expiration
+    # Grant/deny access based on exact level match
+    # Log access attempt with classification details
+    # Implementation needed
+
+@app.route('/api/documents/verify-classification-access', methods=['POST'])  
+def verify_classification_access():
+    """API endpoint to verify user's classification access rights"""
+    # Check user's classification credentials against document requirements
+    # Return detailed access authorization
+    # Implementation needed
+
+@app.route('/documents/browse', methods=['GET'])
+def browse_accessible_documents():
+    """Browse documents user can access based on their classification levels"""
+    # Get user's classification credentials
+    # Filter documents by accessible classification levels
+    # Display documents with classification indicators
+    # Implementation needed
+
+def check_document_access_authorization(user_identity_hash: str, 
+                                      document_classification_level: int) -> dict:
+    """Check if user can access document with specific classification level"""
+    # Get user's classification credentials
+    # Check for EXACT level match (no hierarchical access)
+    # Return authorization result
+    # Implementation needed
+```
+
+#### Task 3.3: Classification Level Management System
+**File**: `classification_manager.py` (new file)
+**Create classification level management functionality**:
+
+```python
+class ClassificationManager:
+    """Manages document classification levels and user authorization"""
+    
+    CLASSIFICATION_LEVELS = {
+        1: {'name': 'public', 'label': 'Public', 'description': 'Public information'},
+        2: {'name': 'internal', 'label': 'Internal', 'description': 'Internal company use'},
+        3: {'name': 'confidential', 'label': 'Confidential', 'description': 'Confidential information'}
+    }
+    
+    def get_user_classification_credentials(self, identity_hash: str) -> list:
+        """Get user's valid classification credentials"""
+        # Query issued_credentials for classification credentials
+        # Return list of valid classification levels
+        # Implementation needed
+    
+    def get_user_max_classification_level(self, identity_hash: str) -> int:
+        """Get user's maximum classification level for document creation"""
+        # Get highest classification credential user has
+        # Return maximum level (0 if no classification credentials)
+        # Implementation needed
+    
+    def can_user_classify_at_level(self, identity_hash: str, level: int) -> bool:
+        """Check if user can classify documents at specific level"""
+        # Check if user has classification credential >= requested level
+        # Implementation needed
+    
+    def can_user_access_level(self, identity_hash: str, level: int) -> bool:
+        """Check if user can access documents at specific level"""
+        # Check if user has EXACT classification credential for level
+        # No hierarchical access - must have exact level
+        # Implementation needed
+    
+    def get_allowed_classification_levels_for_upload(self, identity_hash: str) -> list:
+        """Get classification levels user can apply when uploading documents"""
+        # Return all levels up to user's maximum credential level
+        # e.g., User with Internal credential can use [1, 2] (Public, Internal)
+        # Implementation needed
+```
+
+### Phase 4: Monitoring and Audit
+
+#### Task 4.1: Audit Dashboard
+**File**: `frontend/templates/admin/audit.html`
+**Create audit interface with**:
+
+- Credential request timeline
+- Issuance statistics
+- Access attempt logs  
+- Revocation history
+- User activity summary
+- Security alerts
+
+#### Task 4.2: Audit and Monitoring Routes
+**File**: `app.py` - Add monitoring routes
+
+**Routes to Implement**:
+```python
+@app.route('/admin/audit', methods=['GET'])
+def admin_audit_dashboard():
+    """Administrative audit and monitoring dashboard"""
+    # Implementation needed
+
+@app.route('/api/admin/audit/credentials', methods=['GET'])
+def get_credential_audit_log():
+    """Get credential audit log with filtering"""
+    # Implementation needed
+
+@app.route('/api/admin/stats', methods=['GET'])
+def get_admin_statistics():
+    """Get system statistics for dashboard"""
+    # Implementation needed
+```
+
+## Integration Points
+
+### Configuration Updates
+**File**: `config.py`
+**Add new configuration sections**:
+
+```python
+@dataclass
+class AuthenticationConfig:
+    default_enterprise_account: str = 'DEFAULT_ENTERPRISE'
+    identity_hash_algorithm: str = 'sha256'
+    session_timeout: int = 3600  # 1 hour
+    max_login_attempts: int = 5
+    lockout_duration: int = 900  # 15 minutes
+
+@dataclass
+class EnterpriseConfig:
+    allow_multiple_enterprise_accounts: bool = True
+    require_enterprise_account_approval: bool = True
+    auto_assign_enterprise_account: bool = False  # Auto-assign based on email domain
+    enterprise_admin_roles: list = None  # List of admin roles per enterprise account
+
+@dataclass
+class CredentialConfig:
+    default_expiry_days: int = 365
+    auto_approve_public: bool = False
+    require_department_approval: bool = True
+    max_credentials_per_user: int = 3
+    enable_enterprise_recovery: bool = True  # Allow RA recovery using enterprise account
+
+@dataclass
+class RecoveryConfig:
+    recovery_token_expiry_hours: int = 24
+    require_admin_approval_for_recovery: bool = True
+    allow_self_service_recovery: bool = False  # Future feature
+    recovery_audit_retention_days: int = 90
+```
+
+### Current User Session Enhancement
+**File**: `app.py`
+**Update user session structure**:
+
+```python
+current_user = {
+    'is_authenticated': True,
+    'user_id': 123,
+    'email': 'user@company.com',
+    'enterprise_account_name': 'ACME_CORP',  # Enterprise account used as salt
+    'enterprise_account_display': 'ACME Corporation',
+    'identity_hash': 'a1b2c3d4e5f6...',  # Generated with enterprise account as salt
+    'identity_hash_display': 'a1b2c3d4...',  # First 8 chars for display
+    'full_name': 'John Doe',
+    'department': 'Engineering',
+    'job_title': 'Senior Developer',
+    'employee_id': 'EMP-001',
+    'active_credentials': ['public', 'internal'],  # Currently valid credentials
+    'pending_requests': ['confidential'],  # Pending credential requests
+    'is_admin': False,
+    'can_recover_credentials': True,  # Admin can recover using enterprise account
+    'last_login': datetime,
+    'session_expires': datetime
+}
+```
+
+## Testing Strategy
+
+### Unit Testing
+**Test Categories**:
+1. **Identity Hash Generation**: Verify deterministic hashing
+2. **Credential Request Workflow**: End-to-end request processing
+3. **Administrative Approval**: Approval/denial logic
+4. **Identus Integration**: Credential issuance and verification
+5. **Document Access Control**: Classification-based access
+
+### Integration Testing
+**Test Scenarios**:
+1. **User Registration → Credential Request → Approval → Document Access**
+2. **Credential Revocation → Access Denial**
+3. **Multiple Credential Types → Different Document Access Levels**
+4. **Admin Workflow → User Notification → Audit Trail**
+
+## Success Criteria
+
+### Functional Requirements Met:
+- ✅ User registration with enterprise account-based cryptographic identity
+- ✅ Registration Authority control using enterprise account as salt
+- ✅ Credential request and approval workflow with enterprise account management
+- ✅ Identus credential issuance to enterprise-managed identities
+- ✅ Document classification and access control with enterprise oversight
+- ✅ Administrative oversight and audit trail with enterprise account context
+- ✅ Credential lifecycle management (issue/revoke/expire/recover)
+- ✅ Lost credential recovery using Registration Authority + enterprise account authority
+
+### Performance Targets:
+- ✅ User registration < 3 seconds
+- ✅ Credential request submission < 2 seconds
+- ✅ Administrative approval processing < 5 seconds
+- ✅ Document access verification < 1 second
+- ✅ Support 100+ concurrent users
+
+### Security Requirements:
+- ✅ Cryptographic user identity generation
+- ✅ Secure credential storage and management
+- ✅ Complete audit trail for all operations
+- ✅ Role-based access control (user/admin)
+- ✅ Classification-based document protection
+
+## Deployment Notes
+
+**Prerequisites**:
+- Working Identus Issuer Agent (port 8080)
+- PostgreSQL database with updated schema
+- Flask application with enhanced authentication
+- Admin user accounts for credential approval
+
+**Migration from Current System**:
+- Existing demo users can be migrated to new schema
+- Current credential applications converted to new format
+- Maintain backward compatibility during transition
+
+## Additional Implementation Details
+
+### Phase 5: Enterprise Account Management
+
+#### Task 5.1: Multi-Enterprise Account Support
+**File**: `app.py` - Enterprise account management
+
+**Advanced Enterprise Features**:
+```python
+@app.route('/admin/enterprise/create', methods=['POST'])
+def create_enterprise_account():
+    """Create new enterprise account (super admin only)"""
+    # Validate super admin privileges
+    # Create new enterprise account
+    # Set up default policies
+    # Initialize account-specific settings
+    # Implementation needed
+
+@app.route('/admin/enterprise/<account_name>/users', methods=['GET'])
+def get_enterprise_users(account_name):
+    """Get all users under specific enterprise account"""
+    # List users with their credential status
+    # Show user activity and last login
+    # Display credential distribution
+    # Implementation needed
+
+@app.route('/admin/enterprise/<account_name>/migrate', methods=['POST'])
+def migrate_users_between_enterprise_accounts():
+    """Migrate users from one enterprise account to another"""
+    # Admin function for reorganization
+    # Regenerate identity hashes with new enterprise account
+    # Update all credential records
+    # Maintain audit trail
+    # Implementation needed
+
+def auto_assign_enterprise_account_by_email_domain(email: str) -> str:
+    """Auto-assign enterprise account based on email domain"""
+    # Extract domain from email
+    # Look up domain-to-enterprise-account mapping
+    # Return appropriate enterprise account name
+    # Implementation needed
+```
+
+#### Task 5.2: Enhanced Recovery Mechanisms
+**File**: `recovery_manager.py` (new file)
+
+**Recovery Management System**:
+```python
+class EnterpriseRecoveryManager:
+    """Manages credential recovery using enterprise account authority"""
+    
+    def initiate_admin_recovery(self, user_email: str, 
+                              enterprise_account_name: str,
+                              admin_user: str, 
+                              recovery_reason: str) -> dict:
+        """Admin initiates recovery for user who lost access"""
+        # Create recovery request
+        # Generate secure recovery token
+        # Log recovery initiation
+        # Notify relevant parties
+        # Implementation needed
+    
+    def process_recovery_with_new_password(self, recovery_token: str,
+                                         new_password: str,
+                                         admin_authorization: str) -> dict:
+        """Complete recovery by setting new password and regenerating identity"""
+        # Validate recovery token and admin authorization
+        # Generate new identity hash with enterprise account
+        # Migrate all existing credentials to new identity
+        # Revoke old identity (if trackable)
+        # Update user record
+        # Log completed recovery
+        # Implementation needed
+    
+    def bulk_enterprise_recovery(self, enterprise_account_name: str,
+                               user_list: list,
+                               admin_authorization: str) -> dict:
+        """Bulk recovery for enterprise account (e.g., security incident)"""
+        # Process multiple user recoveries
+        # Generate new enterprise account salt if compromised
+        # Regenerate all identity hashes
+        # Re-issue all credentials
+        # Comprehensive audit logging
+        # Implementation needed
+```
+
+#### Task 5.3: Enterprise Account Policies
+**File**: `enterprise_policies.py` (new file)
+
+**Policy Management**:
+```python
+class EnterpriseAccountPolicy:
+    """Manage policies per enterprise account"""
+    
+    def get_account_credential_policy(self, enterprise_account_name: str) -> dict:
+        """Get credential policies for specific enterprise account"""
+        return {
+            'auto_approve_public': False,
+            'require_manager_approval': True,
+            'max_credentials_per_user': 3,
+            'credential_expiry_days': 365,
+            'allow_self_service_requests': True,
+            'require_department_validation': True,
+            'allowed_classification_levels': ['public', 'internal', 'confidential']
+        }
+    
+    def validate_credential_request_against_policy(self, request_data: dict,
+                                                  enterprise_account_name: str) -> dict:
+        """Validate credential request against enterprise account policies"""
+        # Check against account-specific policies
+        # Return validation result with policy violations
+        # Implementation needed
+```
+
+### Phase 6: Integration with Existing Identus Agent
+
+#### Task 6.1: Enhanced Identus Integration
+**File**: `identus_wrapper.py` - Production-ready integration
+
+**Enterprise-Aware Identus Operations**:
+```python
+class IdentusDashboardClient:
+    
+    def setup_enterprise_account_issuer(self, enterprise_account_name: str) -> dict:
+        """Set up issuer configuration for enterprise account"""
+        # Create enterprise-specific issuer DID if needed
+        # Configure enterprise account in Identus
+        # Set up credential schemas for enterprise account
+        # Implementation needed
+    
+    def issue_enterprise_credential_with_metadata(self, 
+                                                identity_hash: str,
+                                                enterprise_account_name: str,
+                                                user_info: dict,
+                                                credential_type: str,
+                                                metadata: dict) -> dict:
+        """Issue credential with full enterprise metadata"""
+        claims = {
+            "sub": identity_hash,  # Subject is the identity hash
+            "iss": f"did:enterprise:{enterprise_account_name}",  # Enterprise issuer
+            "enterpriseAccount": enterprise_account_name,
+            "identityHash": identity_hash,
+            "email": user_info['email'],
+            "fullName": user_info['full_name'],
+            "department": user_info.get('department', ''),
+            "jobTitle": user_info.get('job_title', ''),
+            "employeeId": user_info.get('employee_id', ''),
+            "credentialType": credential_type,
+            "classificationLevel": credential_type,
+            "issuedAt": datetime.now().isoformat(),
+            "expiresAt": (datetime.now() + timedelta(days=365)).isoformat(),
+            "issuerMetadata": {
+                "enterpriseAccount": enterprise_account_name,
+                "issuingSystem": "classification-document-system",
+                "version": "1.0"
+            },
+            "customMetadata": metadata
+        }
+        
+        # Issue to Identus with enterprise context
+        # Implementation needed
+    
+    def verify_enterprise_credential_chain(self, identity_hash: str,
+                                         enterprise_account_name: str,
+                                         credential_type: str) -> dict:
+        """Verify credential with full enterprise chain validation"""
+        # Verify credential exists and is valid
+        # Verify enterprise account authority
+        # Check credential chain integrity
+        # Validate classification level
+        # Implementation needed
+```
+
+### Phase 7: Advanced Security Features
+
+#### Task 7.1: Enterprise Account Security
+**Security Enhancements**:
+
+```python
+def validate_enterprise_account_integrity(enterprise_account_name: str) -> dict:
+    """Validate enterprise account hasn't been compromised"""
+    # Check for suspicious identity hash patterns
+    # Validate credential issuance patterns
+    # Detect potential salt compromise
+    # Return security assessment
+    # Implementation needed
+
+def rotate_enterprise_account_context(old_account_name: str,
+                                    new_account_name: str,
+                                    admin_authorization: str) -> dict:
+    """Rotate enterprise account name (extreme security measure)"""
+    # This would regenerate ALL identity hashes for the enterprise account
+    # Re-issue ALL credentials
+    # Update all database records
+    # Comprehensive audit trail
+    # Implementation needed
+```
+
+#### Task 7.2: Audit and Compliance for Enterprise Accounts
+**File**: `frontend/templates/admin/enterprise-audit.html` (new template)
+
+**Enterprise-Specific Audit Dashboard**:
+- Credential distribution by enterprise account
+- User activity patterns per enterprise account
+- Recovery requests and completions by enterprise account
+- Suspicious activity detection per enterprise account
+- Compliance reporting by enterprise account
+- Cross-enterprise account analytics for super admins
+
+### Phase 8: Testing Enterprise Account Features
+
+#### Task 8.1: Enterprise Account Test Scenarios
+**Test Cases**:
+
+1. **Multi-Enterprise Setup**:
+   - Create multiple enterprise accounts
+   - Register users under different enterprise accounts
+   - Verify identity hash separation between enterprise accounts
+
+2. **Recovery Testing**:
+   - Simulate lost password scenario
+   - Admin recovery using enterprise account authority
+   - Verify credential migration to new identity hash
+
+3. **Enterprise Account Migration**:
+   - Move user from one enterprise account to another
+   - Verify all credentials migrate correctly
+   - Validate audit trail completeness
+
+4. **Security Validation**:
+   - Attempt cross-enterprise account access
+   - Verify enterprise account isolation
+   - Test recovery authorization validation
+
+5. **Bulk Operations**:
+   - Bulk user creation under enterprise account
+   - Bulk credential issuance
+   - Bulk recovery scenarios
+
+### Migration Path
+
+#### From Current Demo System:
+1. **Add Default Enterprise Account**: Create "DEFAULT_ENTERPRISE" account
+2. **Migrate Existing Users**: Convert current users to use enterprise account salt
+3. **Update Current Credentials**: Migrate existing credentials to enterprise account model
+4. **Enable Recovery Features**: Implement admin recovery capabilities
+5. **Add Multi-Enterprise Support**: Enable multiple enterprise accounts when needed
+
+This enterprise account approach gives you:
+- **Complete Corporate Control**: RA can always recover any user
+- **Scalable Multi-Tenancy**: Support multiple organizations
+- **Deterministic Identity**: Reproducible identity generation
+- **Strong Audit Trail**: All actions traceable to enterprise accounts
+- **Security**: Enterprise account isolation and recovery capabilities
