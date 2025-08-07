@@ -164,7 +164,8 @@
       "Bash(./scripts/setup-agents.sh:*)",
       "Bash(./scripts/populate-database.sh:*)",
       "Bash(git add:*)",
-      "Bash(git commit:*)"
+      "Bash(git commit:*)",
+      "Bash(git push:*)"
     ],
     "deny": []
   }
