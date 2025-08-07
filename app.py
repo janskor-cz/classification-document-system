@@ -9,10 +9,15 @@ from flask_cors import CORS
 import os
 import json
 import threading
-from datetime import datetime
+from datetime import datetime, timedelta
 import sys
 import traceback
 from functools import wraps
+import hashlib
+import secrets
+import bcrypt
+import psycopg2
+from psycopg2.extras import RealDictCursor
 
 # Import our configuration and Identus integration
 from config import get_config, get_flask_config
@@ -33,16 +38,320 @@ CORS(app)
 # Configure Flask app
 app.config['SECRET_KEY'] = config.security.secret_key
 
+# Database connection helper
+def get_db_connection():
+    """Get database connection using connection string from config"""
+    try:
+        # For development, connect to identus-postgres container
+        conn = psycopg2.connect(
+            host='localhost',
+            port=5432,
+            database='identus_db',
+            user='postgres',
+            password='postgres',
+            cursor_factory=RealDictCursor
+        )
+        return conn
+    except Exception as e:
+        print(f"❌ Database connection error: {e}")
+        return None
+
+# ==================== ENHANCED AUTHENTICATION FUNCTIONS ====================
+
+def generate_identity_hash(email: str, password: str, enterprise_account_name: str) -> str:
+    """Generate deterministic identity hash using enterprise account as salt"""
+    combined = f"{email.lower().strip()}{password}{enterprise_account_name}"
+    return hashlib.sha256(combined.encode()).hexdigest()
+
+def hash_password(password: str) -> str:
+    """Hash password using bcrypt"""
+    return bcrypt.hashpw(password.encode('utf-8'), bcrypt.gensalt()).decode('utf-8')
+
+def verify_password(password: str, hashed_password: str) -> bool:
+    """Verify password against bcrypt hash"""
+    return bcrypt.checkpw(password.encode('utf-8'), hashed_password.encode('utf-8'))
+
+def create_user_account(email: str, password: str, full_name: str, 
+                       enterprise_account_name: str = "DEFAULT_ENTERPRISE",
+                       department: str = None, job_title: str = None, 
+                       employee_id: str = None) -> dict:
+    """Create new user with enterprise account-based identity"""
+    conn = get_db_connection()
+    if not conn:
+        return {'success': False, 'error': 'Database connection failed'}
+    
+    try:
+        with conn.cursor() as cursor:
+            # Check if enterprise account exists
+            cursor.execute("SELECT id FROM enterprise_accounts WHERE account_name = %s AND is_active = true", 
+                         (enterprise_account_name,))
+            enterprise_account = cursor.fetchone()
+            
+            if not enterprise_account:
+                return {'success': False, 'error': f'Enterprise account {enterprise_account_name} not found'}
+            
+            # Generate identity hash using enterprise account name as salt
+            identity_hash = generate_identity_hash(email, password, enterprise_account_name)
+            password_hash = hash_password(password)
+            
+            # Check if user already exists
+            cursor.execute("SELECT id FROM users WHERE email = %s OR identity_hash = %s", 
+                         (email, identity_hash))
+            if cursor.fetchone():
+                return {'success': False, 'error': 'User already exists'}
+            
+            # Create user
+            cursor.execute("""
+                INSERT INTO users (email, password_hash, enterprise_account_id, enterprise_account_name, 
+                                 identity_hash, full_name, department, job_title, employee_id)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+                RETURNING id, identity_hash
+            """, (email, password_hash, enterprise_account['id'], enterprise_account_name, 
+                  identity_hash, full_name, department, job_title, employee_id))
+            
+            user_result = cursor.fetchone()
+            conn.commit()
+            
+            return {
+                'success': True, 
+                'user_id': user_result['id'],
+                'identity_hash': user_result['identity_hash'],
+                'enterprise_account_name': enterprise_account_name,
+                'message': 'User created successfully'
+            }
+            
+    except Exception as e:
+        conn.rollback()
+        return {'success': False, 'error': str(e)}
+    finally:
+        conn.close()
+
+def authenticate_user(email: str, password: str, 
+                     enterprise_account_name: str = None) -> dict:
+    """Authenticate user with enterprise account validation"""
+    conn = get_db_connection()
+    if not conn:
+        return {'success': False, 'error': 'Database connection failed'}
+    
+    try:
+        with conn.cursor() as cursor:
+            # If enterprise_account_name not provided, look it up by email
+            if not enterprise_account_name:
+                cursor.execute("SELECT enterprise_account_name FROM users WHERE email = %s AND is_active = true", 
+                             (email,))
+                user_lookup = cursor.fetchone()
+                if not user_lookup:
+                    return {'success': False, 'error': 'User not found'}
+                enterprise_account_name = user_lookup['enterprise_account_name']
+            
+            # Generate identity hash and verify against stored hash
+            identity_hash = generate_identity_hash(email, password, enterprise_account_name)
+            
+            cursor.execute("""
+                SELECT u.*, ea.account_display_name 
+                FROM users u
+                JOIN enterprise_accounts ea ON u.enterprise_account_name = ea.account_name
+                WHERE u.identity_hash = %s AND u.is_active = true AND ea.is_active = true
+            """, (identity_hash,))
+            
+            user = cursor.fetchone()
+            if not user:
+                return {'success': False, 'error': 'Invalid credentials'}
+            
+            # Verify password
+            if not verify_password(password, user['password_hash']):
+                return {'success': False, 'error': 'Invalid credentials'}
+            
+            # Get user's credentials
+            cursor.execute("""
+                SELECT credential_type, classification_level, status 
+                FROM issued_credentials 
+                WHERE user_id = %s AND status = 'issued'
+                AND (expires_at IS NULL OR expires_at > NOW())
+            """, (user['id'],))
+            
+            credentials = cursor.fetchall()
+            
+            return {
+                'success': True,
+                'user': dict(user),
+                'credentials': [dict(cred) for cred in credentials],
+                'identity_hash_display': identity_hash[:8] + '...',
+                'message': 'Authentication successful'
+            }
+            
+    except Exception as e:
+        return {'success': False, 'error': str(e)}
+    finally:
+        conn.close()
+
+def recover_user_identity(email: str, new_password: str, 
+                         enterprise_account_name: str, 
+                         admin_authorization: str) -> dict:
+    """Registration Authority recovery of lost user credentials"""
+    # TODO: Implement admin authorization validation
+    conn = get_db_connection()
+    if not conn:
+        return {'success': False, 'error': 'Database connection failed'}
+    
+    try:
+        with conn.cursor() as cursor:
+            # Find user by email and enterprise account
+            cursor.execute("""
+                SELECT id, email, full_name FROM users 
+                WHERE email = %s AND enterprise_account_name = %s
+            """, (email, enterprise_account_name))
+            
+            user = cursor.fetchone()
+            if not user:
+                return {'success': False, 'error': 'User not found'}
+            
+            # Generate new identity hash with new password
+            new_identity_hash = generate_identity_hash(email, new_password, enterprise_account_name)
+            new_password_hash = hash_password(new_password)
+            
+            # Update user record
+            cursor.execute("""
+                UPDATE users 
+                SET password_hash = %s, identity_hash = %s, updated_at = NOW()
+                WHERE id = %s
+            """, (new_password_hash, new_identity_hash, user['id']))
+            
+            # Update all issued credentials with new identity hash
+            cursor.execute("""
+                UPDATE issued_credentials 
+                SET identity_hash = %s
+                WHERE user_id = %s
+            """, (new_identity_hash, user['id']))
+            
+            # Log recovery action
+            cursor.execute("""
+                INSERT INTO credential_audit_log 
+                (user_id, identity_hash, enterprise_account_name, action, credential_category, 
+                 details, performed_by)
+                VALUES (%s, %s, %s, 'recover', 'enterprise', %s, %s)
+            """, (user['id'], new_identity_hash, enterprise_account_name, 
+                  json.dumps({'email': email, 'recovery_type': 'admin_password_reset'}),
+                  admin_authorization))
+            
+            conn.commit()
+            
+            return {
+                'success': True,
+                'new_identity_hash': new_identity_hash,
+                'message': 'User credentials recovered successfully'
+            }
+            
+    except Exception as e:
+        conn.rollback()
+        return {'success': False, 'error': str(e)}
+    finally:
+        conn.close()
+
+def get_enterprise_account_info(account_name: str) -> dict:
+    """Get enterprise account information"""
+    conn = get_db_connection()
+    if not conn:
+        return {'success': False, 'error': 'Database connection failed'}
+    
+    try:
+        with conn.cursor() as cursor:
+            cursor.execute("""
+                SELECT * FROM enterprise_accounts 
+                WHERE account_name = %s AND is_active = true
+            """, (account_name,))
+            
+            account = cursor.fetchone()
+            if not account:
+                return {'success': False, 'error': 'Enterprise account not found'}
+            
+            return {'success': True, 'account': dict(account)}
+            
+    except Exception as e:
+        return {'success': False, 'error': str(e)}
+    finally:
+        conn.close()
+
+def list_enterprise_users(enterprise_account_name: str, 
+                         include_inactive: bool = False) -> list:
+    """List all users under enterprise account"""
+    conn = get_db_connection()
+    if not conn:
+        return []
+    
+    try:
+        with conn.cursor() as cursor:
+            where_clause = "WHERE enterprise_account_name = %s"
+            params = [enterprise_account_name]
+            
+            if not include_inactive:
+                where_clause += " AND is_active = true"
+            
+            cursor.execute(f"""
+                SELECT id, email, full_name, department, job_title, employee_id, 
+                       is_active, has_enterprise_credential, created_at
+                FROM users 
+                {where_clause}
+                ORDER BY created_at DESC
+            """, params)
+            
+            return [dict(user) for user in cursor.fetchall()]
+            
+    except Exception as e:
+        print(f"❌ Error listing enterprise users: {e}")
+        return []
+    finally:
+        conn.close()
+
+def get_user_max_classification_level(identity_hash: str) -> int:
+    """Get user's maximum classification level"""
+    conn = get_db_connection()
+    if not conn:
+        return 0
+    
+    try:
+        with conn.cursor() as cursor:
+            cursor.execute("SELECT get_user_max_classification_level(%s)", (identity_hash,))
+            result = cursor.fetchone()
+            return result[0] if result else 0
+            
+    except Exception as e:
+        print(f"❌ Error getting max classification level: {e}")
+        return 0
+    finally:
+        conn.close()
+
 # Real applications storage - loads from Identus system
 applications_db = []
 
-# Simple user session simulation (replace with proper auth in production)
+# Enhanced user session with enterprise account structure (Working Package 1)
 current_user = {
     'is_authenticated': True,
-    'name': 'Demo User',
-    'email': 'demo@example.com',
-    'credentials_count': 0,
-    'is_admin': True
+    'user_id': 1,
+    'email': 'john.doe@company.com',
+    'enterprise_account_name': 'DEFAULT_ENTERPRISE',  # Enterprise account used as salt
+    'enterprise_account_display': 'Default Enterprise Account',
+    'identity_hash': 'sample_identity_hash_john_doe_12345678',  # Generated with enterprise account as salt
+    'identity_hash_display': 'sample_i...',  # First 8 chars for display
+    'full_name': 'John Doe',
+    'department': 'Engineering',
+    'job_title': 'Senior Developer',
+    'employee_id': 'EMP-001',
+    
+    # Two-stage credential system
+    'has_enterprise_credential': True,  # Basic enterprise access
+    'classification_credentials': {
+        'public': {'status': 'issued', 'level': 1},
+        'internal': {'status': 'none', 'level': 0},
+        'confidential': {'status': 'none', 'level': 0}
+    },
+    'max_classification_level': 1,  # Current maximum classification level
+    'active_credentials': ['public'],  # Currently valid credentials
+    'pending_requests': [],  # Pending credential requests
+    'is_admin': True,
+    'can_recover_credentials': True,  # Admin can recover using enterprise account
+    'last_login': datetime.now(),
+    'session_expires': datetime.now() + timedelta(hours=8)
 }
 
 def load_real_identus_data():
@@ -206,45 +515,104 @@ def inject_user():
 
 @app.route('/')
 def dashboard():
-    """Main dashboard page"""
+    """Main dashboard page with real user data"""
     try:
-        # Calculate statistics
+        # Check if user is authenticated
+        if not current_user.get('is_authenticated'):
+            return redirect(url_for('login'))
+        
+        # Get real user data from database
+        conn = get_db_connection()
+        credentials = []
+        recent_activities = []
         stats = {
-            'my_credentials': current_user.get('credentials_count', 0),
-            'documents_accessed': 15,  # Mock data
-            'pending_requests': len([app for app in applications_db if app['status'] == 'pending']),
+            'my_credentials': 0,
+            'documents_accessed': 0,
+            'pending_requests': 0,
             'security_score': 85
         }
         
-        # Get user's credentials (mock data)
-        credentials = [
-            {
-                'name': 'Enterprise Credential',
-                'type': 'enterprise',
-                'issued_date': datetime.now()
-            },
-            {
-                'name': 'Public Classification',
-                'type': 'public',
-                'issued_date': datetime.now()
-            }
-        ]
+        if conn:
+            try:
+                with conn.cursor() as cursor:
+                    # Get user's issued credentials
+                    cursor.execute("""
+                        SELECT credential_type, classification_level, issued_at, status
+                        FROM issued_credentials 
+                        WHERE user_id = %s AND status = 'issued'
+                        ORDER BY issued_at DESC
+                    """, (current_user.get('user_id'),))
+                    
+                    db_credentials = cursor.fetchall()
+                    
+                    # Format credentials for display
+                    for cred in db_credentials:
+                        credential_display = {
+                            'name': f"{cred['credential_type'].title()} Credential",
+                            'type': cred['credential_type'],
+                            'classification_level': cred.get('classification_level'),
+                            'issued_date': cred['issued_at'],
+                            'status': cred['status']
+                        }
+                        credentials.append(credential_display)
+                    
+                    # Get credential requests
+                    cursor.execute("""
+                        SELECT COUNT(*) as pending_count
+                        FROM credential_requests 
+                        WHERE user_id = %s AND status = 'pending'
+                    """, (current_user.get('user_id'),))
+                    
+                    pending_result = cursor.fetchone()
+                    stats['pending_requests'] = pending_result['pending_count'] if pending_result else 0
+                    
+                    # Get recent credential activities
+                    cursor.execute("""
+                        SELECT action, credential_type, details, created_at
+                        FROM credential_audit_log 
+                        WHERE user_id = %s 
+                        ORDER BY created_at DESC 
+                        LIMIT 5
+                    """, (current_user.get('user_id'),))
+                    
+                    audit_records = cursor.fetchall()
+                    
+                    # Format activities for display
+                    for record in audit_records:
+                        activity = {
+                            'action': record['action'].title().replace('_', ' '),
+                            'description': f"{record['credential_type']} credential {record['action']}",
+                            'timestamp': record['created_at'],
+                            'type': 'success' if record['action'] in ['approve', 'issue'] else 'info'
+                        }
+                        recent_activities.append(activity)
+                    
+                    # Update stats
+                    stats['my_credentials'] = len(credentials)
+                    
+            except Exception as db_error:
+                print(f"⚠️ Database error in dashboard: {db_error}")
+            finally:
+                conn.close()
         
-        # Get recent activities (mock data)
-        recent_activities = [
-            {
-                'action': 'Credential Approved',
-                'description': 'Public classification credential approved',
-                'timestamp': datetime.now(),
+        # Add default activity if no real activities
+        if not recent_activities:
+            recent_activities.append({
+                'action': 'Account Created',
+                'description': f'Welcome to the enterprise account system, {current_user.get("full_name", "User")}!',
+                'timestamp': current_user.get('last_login', datetime.now()),
                 'type': 'success'
-            },
-            {
-                'action': 'Document Uploaded',
-                'description': 'Annual report classified as Internal',
-                'timestamp': datetime.now(),
-                'type': 'info'
-            }
-        ]
+            })
+        
+        # Add default credential if user has enterprise credential status
+        if not credentials and current_user.get('has_enterprise_credential'):
+            credentials.append({
+                'name': 'Enterprise Access Credential',
+                'type': 'basic_enterprise',
+                'classification_level': 0,
+                'issued_date': current_user.get('last_login', datetime.now()),
+                'status': 'issued'
+            })
         
         return render_template('dashboard.html',
                              stats=stats,
@@ -270,21 +638,69 @@ def upload_document():
 
 @app.route('/auth/login', methods=['POST'])
 def auth_login():
-    """Handle login form submission"""
+    """Handle login form submission with enterprise account authentication"""
     try:
         email = request.form.get('email')
         password = request.form.get('password')
+        enterprise_account = request.form.get('enterprise_account')
         remember_me = request.form.get('remember_me')
         
-        # Mock authentication (replace with real auth in production)
-        if email and password:
-            # Simulate successful login
-            current_user['is_authenticated'] = True
-            current_user['email'] = email
-            flash('Login successful!', 'success')
+        if not email or not password:
+            flash('Email and password are required', 'error')
+            return redirect(url_for('login'))
+        
+        # Authenticate user with enterprise account system
+        auth_result = authenticate_user(email, password, enterprise_account)
+        
+        if auth_result['success']:
+            user = auth_result['user']
+            credentials = auth_result['credentials']
+            
+            # Update current_user session with authenticated user data
+            current_user.update({
+                'is_authenticated': True,
+                'user_id': user['id'],
+                'email': user['email'],
+                'enterprise_account_name': user['enterprise_account_name'],
+                'enterprise_account_display': auth_result.get('user', {}).get('account_display_name', user['enterprise_account_name']),
+                'identity_hash': user['identity_hash'],
+                'identity_hash_display': auth_result['identity_hash_display'],
+                'full_name': user['full_name'],
+                'department': user['department'],
+                'job_title': user['job_title'],
+                'employee_id': user['employee_id'],
+                'has_enterprise_credential': user['has_enterprise_credential'],
+                'last_login': datetime.now(),
+                'session_expires': datetime.now() + timedelta(hours=8)
+            })
+            
+            # Process credentials
+            classification_creds = {'public': {'status': 'none', 'level': 0},
+                                  'internal': {'status': 'none', 'level': 0},
+                                  'confidential': {'status': 'none', 'level': 0}}
+            active_creds = []
+            max_level = 0
+            
+            for cred in credentials:
+                if cred['credential_type'] in classification_creds:
+                    classification_creds[cred['credential_type']] = {
+                        'status': 'issued',
+                        'level': cred['classification_level'] or 0
+                    }
+                    active_creds.append(cred['credential_type'])
+                    max_level = max(max_level, cred['classification_level'] or 0)
+            
+            current_user.update({
+                'classification_credentials': classification_creds,
+                'active_credentials': active_creds,
+                'max_classification_level': max_level,
+                'pending_requests': []  # TODO: Load from database
+            })
+            
+            flash(f'Welcome back, {user["full_name"]}!', 'success')
             return redirect(url_for('dashboard'))
         else:
-            flash('Invalid email or password', 'error')
+            flash(auth_result['error'], 'error')
             return redirect(url_for('login'))
             
     except Exception as e:
@@ -292,12 +708,144 @@ def auth_login():
         flash('Login failed. Please try again.', 'error')
         return redirect(url_for('login'))
 
+@app.route('/register', methods=['GET', 'POST'])
+def register():
+    """User registration page with enterprise account selection"""
+    if request.method == 'GET':
+        # Get available enterprise accounts
+        conn = get_db_connection()
+        enterprise_accounts = []
+        if conn:
+            try:
+                with conn.cursor() as cursor:
+                    cursor.execute("SELECT account_name, account_display_name FROM enterprise_accounts WHERE is_active = true ORDER BY account_display_name")
+                    enterprise_accounts = [dict(account) for account in cursor.fetchall()]
+            except Exception as e:
+                print(f"❌ Error loading enterprise accounts: {e}")
+            finally:
+                conn.close()
+        
+        return render_template('register.html', enterprise_accounts=enterprise_accounts)
+    
+    else:  # POST
+        try:
+            email = request.form.get('email')
+            password = request.form.get('password')
+            confirm_password = request.form.get('confirm_password')
+            full_name = request.form.get('full_name')
+            enterprise_account = request.form.get('enterprise_account', 'DEFAULT_ENTERPRISE')
+            department = request.form.get('department')
+            job_title = request.form.get('job_title')
+            employee_id = request.form.get('employee_id')
+            
+            # Validate input
+            if not all([email, password, confirm_password, full_name]):
+                flash('All required fields must be filled', 'error')
+                return redirect(url_for('register'))
+            
+            if password != confirm_password:
+                flash('Passwords do not match', 'error')
+                return redirect(url_for('register'))
+            
+            if len(password) < 8:
+                flash('Password must be at least 8 characters long', 'error')
+                return redirect(url_for('register'))
+            
+            # Create user account
+            result = create_user_account(email, password, full_name, enterprise_account, 
+                                       department, job_title, employee_id)
+            
+            if result['success']:
+                flash(f'Account created successfully! You can now log in.', 'success')
+                return redirect(url_for('login'))
+            else:
+                flash(result['error'], 'error')
+                return redirect(url_for('register'))
+                
+        except Exception as e:
+            print(f"❌ Registration error: {e}")
+            flash('Registration failed. Please try again.', 'error')
+            return redirect(url_for('register'))
+
 @app.route('/auth/logout')
 def auth_logout():
     """Handle logout"""
     current_user['is_authenticated'] = False
     flash('You have been logged out', 'info')
     return redirect(url_for('login'))
+
+@app.route('/api/user/profile')
+def get_user_profile():
+    """Get current user profile including enterprise account info"""
+    try:
+        if not current_user.get('is_authenticated'):
+            return jsonify({'error': 'Not authenticated'}), 401
+        
+        # Get additional user info from database if needed
+        profile_data = {
+            'user_id': current_user['user_id'],
+            'email': current_user['email'],
+            'full_name': current_user['full_name'],
+            'department': current_user['department'],
+            'job_title': current_user['job_title'],
+            'employee_id': current_user['employee_id'],
+            'enterprise_account_name': current_user['enterprise_account_name'],
+            'enterprise_account_display': current_user['enterprise_account_display'],
+            'identity_hash_display': current_user['identity_hash_display'],
+            'has_enterprise_credential': current_user['has_enterprise_credential'],
+            'classification_credentials': current_user['classification_credentials'],
+            'max_classification_level': current_user['max_classification_level'],
+            'active_credentials': current_user['active_credentials'],
+            'pending_requests': current_user['pending_requests']
+        }
+        
+        return jsonify(profile_data)
+        
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/api/enterprise/accounts', methods=['GET'])
+def get_enterprise_accounts():
+    """Get available enterprise accounts for registration"""
+    try:
+        conn = get_db_connection()
+        if not conn:
+            return jsonify({'error': 'Database connection failed'}), 500
+        
+        with conn.cursor() as cursor:
+            cursor.execute("""
+                SELECT account_name, account_display_name, description 
+                FROM enterprise_accounts 
+                WHERE is_active = true 
+                ORDER BY account_display_name
+            """)
+            accounts = [dict(account) for account in cursor.fetchall()]
+            
+        return jsonify({'accounts': accounts})
+        
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+    finally:
+        if conn:
+            conn.close()
+
+@app.route('/api/user/max-classification-level', methods=['GET'])
+def get_user_max_classification_level():
+    """Get user's current maximum classification level"""
+    try:
+        if not current_user.get('is_authenticated'):
+            return jsonify({'error': 'Not authenticated'}), 401
+        
+        identity_hash = current_user['identity_hash']
+        max_level = get_user_max_classification_level(identity_hash)
+        
+        return jsonify({
+            'max_classification_level': max_level,
+            'identity_hash_display': current_user['identity_hash_display']
+        })
+        
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
 
 # ==================== API ROUTES ====================
 

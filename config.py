@@ -95,6 +95,81 @@ class AuditConfig:
 
 
 @dataclass
+class AuthenticationConfig:
+    """Authentication configuration for Working Package 1"""
+    default_enterprise_account: str = 'DEFAULT_ENTERPRISE'
+    identity_hash_algorithm: str = 'sha256'
+    session_timeout: int = 3600  # 1 hour
+    max_login_attempts: int = 5
+    lockout_duration: int = 900  # 15 minutes
+    password_min_length: int = 8
+    password_require_special_chars: bool = True
+    password_require_numbers: bool = True
+    bcrypt_rounds: int = 12
+
+
+@dataclass
+class EnterpriseConfig:
+    """Enterprise account management configuration"""
+    allow_multiple_enterprise_accounts: bool = True
+    require_enterprise_account_approval: bool = True
+    auto_assign_enterprise_account: bool = False  # Auto-assign based on email domain
+    enterprise_admin_roles: list = field(default_factory=lambda: ["admin", "enterprise_admin"])
+    default_enterprise_display_name: str = "Default Enterprise Account"
+    enable_enterprise_isolation: bool = True  # Isolate users by enterprise account
+    
+    # Email domain to enterprise account mapping
+    domain_to_enterprise: Dict[str, str] = field(default_factory=lambda: {
+        "example.com": "DEFAULT_ENTERPRISE",
+        "acme.com": "ACME_CORP"
+    })
+
+
+@dataclass
+class CredentialConfig:
+    """Credential management configuration"""
+    default_expiry_days: int = 365
+    auto_approve_public: bool = False  # Require approval for all credentials
+    require_department_approval: bool = True
+    max_credentials_per_user: int = 3  # Max classification credentials per user
+    enable_enterprise_recovery: bool = True  # Allow RA recovery using enterprise account
+    
+    # Credential types and their classification levels
+    credential_types: Dict[str, int] = field(default_factory=lambda: {
+        "basic_enterprise": 0,  # Enterprise access credential (no classification level)
+        "public": 1,            # Public classification credential
+        "internal": 2,          # Internal classification credential
+        "confidential": 3       # Confidential classification credential
+    })
+    
+    # Business justification requirements
+    require_justification: Dict[str, bool] = field(default_factory=lambda: {
+        "basic_enterprise": True,
+        "public": True,
+        "internal": True,
+        "confidential": True
+    })
+
+
+@dataclass
+class RecoveryConfig:
+    """Credential recovery configuration"""
+    recovery_token_expiry_hours: int = 24
+    require_admin_approval_for_recovery: bool = True
+    allow_self_service_recovery: bool = False  # Future feature
+    recovery_audit_retention_days: int = 90
+    max_recovery_attempts: int = 3
+    recovery_cooldown_hours: int = 2  # Cooldown between recovery attempts
+    
+    # Admin authorization levels for recovery
+    recovery_authorization_levels: Dict[str, list] = field(default_factory=lambda: {
+        "password_reset": ["admin", "enterprise_admin"],
+        "identity_recovery": ["admin", "enterprise_admin", "security_admin"],
+        "bulk_recovery": ["admin", "security_admin"]
+    })
+
+
+@dataclass
 class WebConfig:
     """Web application configuration"""
     host: str = "0.0.0.0"
@@ -123,6 +198,12 @@ class Config:
         self.documents = DocumentConfig()
         self.audit = AuditConfig()
         self.web = WebConfig()
+        
+        # Working Package 1: New configuration sections
+        self.authentication = AuthenticationConfig()
+        self.enterprise = EnterpriseConfig()
+        self.credentials = CredentialConfig()
+        self.recovery = RecoveryConfig()
         
         # Load environment-specific settings
         self._load_environment_config()
@@ -200,6 +281,36 @@ class Config:
         # Document configuration
         self.documents.upload_folder = os.getenv('UPLOAD_FOLDER', self.documents.upload_folder)
         self.documents.max_file_size = int(os.getenv('MAX_FILE_SIZE', self.documents.max_file_size))
+        
+        # Authentication configuration (Working Package 1)
+        self.authentication.default_enterprise_account = os.getenv(
+            'DEFAULT_ENTERPRISE_ACCOUNT', self.authentication.default_enterprise_account)
+        self.authentication.session_timeout = int(os.getenv(
+            'SESSION_TIMEOUT', self.authentication.session_timeout))
+        self.authentication.max_login_attempts = int(os.getenv(
+            'MAX_LOGIN_ATTEMPTS', self.authentication.max_login_attempts))
+        self.authentication.password_min_length = int(os.getenv(
+            'PASSWORD_MIN_LENGTH', self.authentication.password_min_length))
+        
+        # Enterprise configuration
+        self.enterprise.require_enterprise_account_approval = os.getenv(
+            'REQUIRE_ENTERPRISE_APPROVAL', 'true').lower() == 'true'
+        self.enterprise.auto_assign_enterprise_account = os.getenv(
+            'AUTO_ASSIGN_ENTERPRISE', 'false').lower() == 'true'
+        
+        # Credential configuration
+        self.credentials.default_expiry_days = int(os.getenv(
+            'CREDENTIAL_EXPIRY_DAYS', self.credentials.default_expiry_days))
+        self.credentials.auto_approve_public = os.getenv(
+            'AUTO_APPROVE_PUBLIC', 'false').lower() == 'true'
+        self.credentials.require_department_approval = os.getenv(
+            'REQUIRE_DEPARTMENT_APPROVAL', 'true').lower() == 'true'
+        
+        # Recovery configuration
+        self.recovery.recovery_token_expiry_hours = int(os.getenv(
+            'RECOVERY_TOKEN_EXPIRY_HOURS', self.recovery.recovery_token_expiry_hours))
+        self.recovery.require_admin_approval_for_recovery = os.getenv(
+            'REQUIRE_ADMIN_RECOVERY_APPROVAL', 'true').lower() == 'true'
     
     def _create_required_directories(self):
         """Create required directories if they don't exist"""
@@ -221,6 +332,23 @@ class Config:
     def get_database_url(self) -> str:
         """Get database URL"""
         return self.database.database_url
+    
+    # Working Package 1: New configuration getters
+    def get_authentication_config(self) -> AuthenticationConfig:
+        """Get authentication configuration"""
+        return self.authentication
+    
+    def get_enterprise_config(self) -> EnterpriseConfig:
+        """Get enterprise account configuration"""
+        return self.enterprise
+    
+    def get_credentials_config(self) -> CredentialConfig:
+        """Get credential management configuration"""
+        return self.credentials
+    
+    def get_recovery_config(self) -> RecoveryConfig:
+        """Get credential recovery configuration"""
+        return self.recovery
     
     def get_flask_config(self) -> Dict[str, Any]:
         """Get Flask application configuration as dictionary"""
@@ -251,6 +379,33 @@ class Config:
         
         # Strict level-based access - user must have EXACT level
         return user_num == doc_num
+    
+    # Working Package 1: Enterprise account utility methods
+    def get_enterprise_account_from_email(self, email: str) -> str:
+        """Get enterprise account based on email domain"""
+        if not self.enterprise.auto_assign_enterprise_account:
+            return self.authentication.default_enterprise_account
+        
+        domain = email.split('@')[1] if '@' in email else ''
+        return self.enterprise.domain_to_enterprise.get(
+            domain, self.authentication.default_enterprise_account)
+    
+    def is_credential_type_valid(self, credential_type: str) -> bool:
+        """Check if credential type is valid"""
+        return credential_type in self.credentials.credential_types
+    
+    def get_credential_classification_level(self, credential_type: str) -> int:
+        """Get classification level for credential type"""
+        return self.credentials.credential_types.get(credential_type, 0)
+    
+    def requires_business_justification(self, credential_type: str) -> bool:
+        """Check if credential type requires business justification"""
+        return self.credentials.require_justification.get(credential_type, True)
+    
+    def can_admin_perform_recovery(self, admin_role: str, recovery_type: str) -> bool:
+        """Check if admin role can perform specific recovery type"""
+        allowed_roles = self.recovery.recovery_authorization_levels.get(recovery_type, [])
+        return admin_role in allowed_roles
     
     def validate_config(self) -> bool:
         """Validate configuration settings"""
@@ -285,7 +440,9 @@ class Config:
     
     def __str__(self) -> str:
         """String representation of configuration"""
-        return f"Config(environment={self.environment}, identus_agents=3, db={self.database.database_url})"
+        return (f"Config(environment={self.environment}, "
+                f"enterprise_accounts={self.enterprise.allow_multiple_enterprise_accounts}, "
+                f"identus_agents=3, db={self.database.database_url})")
 
 
 # Global configuration instance
