@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-This is the **Classification Document System** - a Flask-based web application that integrates with Hyperledger Identus for credential management and document classification. The system handles document classification with three levels (public, internal, confidential) and issues verifiable credentials to approved data labelers.
+This is the **Classification Document System** - a comprehensive Flask-based web application that integrates with Hyperledger Identus for advanced credential management and document classification. The system features a complete Self-Sovereign Identity (SSI) workflow with admin approval processes, supports three classification levels (public, internal, confidential), and provides professional Verifiable Credential management with W3C compliance.
 
 ## Key Commands
 
@@ -101,6 +101,103 @@ curl http://localhost:7000/_system/health  # Holder
 curl http://localhost:9000/_system/health  # Verifier
 ```
 
+## 🚀 New Features & Comprehensive SSI System
+
+### 🔐 Complete Admin Panel & User Management
+
+**Admin Authentication & Access Control**:
+- **Secure Role-Based Access**: Only users with specific job titles or email patterns can access admin functions
+- **Admin Panel URL**: `/admin` - comprehensive interface for managing credential requests
+- **Navigation Integration**: Admin link appears only for authorized users
+- **Multi-level Security**: Both route-level and API-level permission checks
+
+**Admin Capabilities**:
+- **View Pending Requests**: See all credential requests awaiting approval with user details
+- **Approve/Deny Workflow**: One-click approval or denial with reason tracking
+- **Real-time Statistics**: Pending requests count, unique users, high-level requests
+- **Audit Trail**: Complete logging of all admin actions with timestamps
+
+### 📋 Enhanced Dashboard & Credential Management
+
+**Professional Credential Display**:
+- **Complete Verifiable Credential Viewer**: Expandable cards showing full W3C-compliant VC JSON
+- **Smart VC Fallback System**: Creates realistic mock VCs from database data when real VCs unavailable
+- **Interactive Features**: Copy-to-clipboard, JSON formatting, visual indicators for real vs demo VCs
+- **Expiration Management**: Color-coded expiration warnings (red for <7 days, yellow for <30 days)
+
+**Credential Request System**:
+- **User-Friendly Request Form**: Integrated into dashboard with classification level selection
+- **Business Justification Required**: Ensures proper documentation for all requests
+- **Department Approval Workflow**: Optional department approver field
+- **Real-time Feedback**: Success/error messages with automatic dashboard refresh
+
+### 🎯 Complete SSI Workflow Implementation
+
+**Request → Approval → Issuance Pipeline**:
+1. **User Request**: Submit credential request through dashboard form
+2. **Admin Review**: Admin views request details and business justification
+3. **Approval Decision**: One-click approve/deny with automatic processing
+4. **Credential Issuance**: Automatic creation of issued credential upon approval
+5. **User Notification**: New credential appears in user's dashboard immediately
+
+**Credential Types Supported**:
+- **Enterprise Access** (Level 0): Basic enterprise system access
+- **Public Classification** (Level 1): Public document handling permissions
+- **Internal Classification** (Level 2): Internal document access rights
+- **Confidential Classification** (Level 3): Highest security clearance level
+
+### 🔧 Technical Enhancements & Security
+
+**Authentication System Improvements**:
+- **Working Login Credentials**: All sample users have functional bcrypt-hashed passwords
+- **Identity Hash System**: Cryptographic identity generation using enterprise account salt
+- **Session Management**: Proper user session handling with authentication state
+
+**Database & API Enhancements**:
+- **Complete CRUD Operations**: Full create, read, update, delete for all credential operations
+- **Audit Logging**: Comprehensive tracking of all system operations for compliance
+- **Error Handling**: Robust error handling with user-friendly messages
+- **Performance Optimization**: Efficient database queries with proper indexing
+
+### 📱 User Experience & Interface
+
+**Modern UI Components**:
+- **Responsive Design**: Works seamlessly on desktop and mobile devices
+- **Professional Styling**: Clean, corporate-grade interface with Bootstrap 5
+- **Interactive Elements**: Smooth animations, loading states, and visual feedback
+- **Accessibility**: Proper ARIA labels, keyboard navigation, and screen reader support
+
+**Dashboard Features**:
+- **Real-time Stats**: Live credential counts, document access metrics, security scores
+- **Quick Actions**: Fast access to common operations (upload documents, request credentials)
+- **Recent Activity**: Timeline of user actions and system events
+
+## 🔑 Login Credentials (Updated)
+
+### Admin Users (Full Admin Panel Access)
+- **Email**: `admin@company.com`
+- **Password**: `admin123`
+- **Role**: System Administrator
+- **Access**: ✅ Complete admin panel, credential approval, user management
+
+### Regular Users (Standard Dashboard Access)
+- **John Doe** (Senior Developer)
+  - Email: `john.doe@company.com`
+  - Password: `john123`
+  - Department: Engineering
+
+- **Jane Smith** (Data Scientist)
+  - Email: `jane.smith@company.com` 
+  - Password: `jane123`
+  - Department: Data Science
+
+### Quick Start for Testing
+1. **Login as Admin**: Use admin credentials to access admin panel
+2. **View Pending Requests**: See credential requests from sample users
+3. **Test Approval Process**: Approve/deny requests and see real-time updates
+4. **Switch Users**: Login as regular users to see approved credentials
+5. **Request New Credentials**: Test the complete request → approval workflow
+
 ## Architecture Overview
 
 ### Core Components
@@ -127,11 +224,31 @@ curl http://localhost:9000/_system/health  # Verifier
 
 ### Key Directories
 
-- `frontend/templates/` - Jinja2 HTML templates (base.html, dashboard.html, login.html, etc.)
+- `frontend/templates/` - Jinja2 HTML templates
+  - `base.html` - Main layout with admin navigation
+  - `dashboard.html` - Enhanced user dashboard with VC viewer and request form
+  - `admin/credential-requests.html` - Complete admin panel for credential management
+  - `documents/upload.html` - Document upload interface
 - `frontend/static/` - CSS and JavaScript assets  
 - `scripts/` - Database initialization and Identus setup scripts
 - `logs/` - Application and audit logs (created at runtime)
 - `uploads/` - Document storage (created at runtime)
+
+### Key Endpoints & Features
+
+**User Routes**:
+- `/` - Enhanced dashboard with VC viewer and credential request form
+- `/login` - User authentication
+- `/documents/upload` - Document upload with classification
+
+**Admin Routes**:
+- `/admin` - **NEW**: Complete admin panel for credential management
+- `/api/admin/credential-requests/<id>` - **NEW**: Approve/deny credential requests
+
+**API Endpoints**:
+- `/api/credentials/request` - **NEW**: Submit credential requests
+- `/api/identus/status` - Identus system health check
+- `/api/applications` - Legacy application management
 
 ### Database Schema
 
@@ -197,15 +314,18 @@ The system supports three document classification levels:
 
 ### Starting Development Environment
 
-**Recommended Approach**:
-1. Start Identus Issuer Agent: `./scripts/setup-issuer-only.sh`
-2. Wait for agent to be healthy (script includes health checks)
-3. Run Flask app: `python app.py`
-4. Access at: http://localhost:5000
+**Recommended Full-Stack Approach**:
+1. **Setup Database**: `./scripts/setup-database.sh` (includes all required user accounts)
+2. **Setup Identus Agents**: `./scripts/setup-agents.sh` (complete 3-agent SSI system)
+3. **Start Flask App**: `python app.py`
+4. **Access Application**: http://localhost:5000
+5. **Test Admin Panel**: Login as `admin@company.com` / `admin123` → Click "Admin"
+6. **Test User Experience**: Login as `john.doe@company.com` / `john123` → Request credentials
 
-**Alternative Approach** (without Identus):
+**Alternative Approach** (Database Only):
 1. Start supporting services: `docker-compose up -d postgres redis`
-2. Run Flask app: `python app.py` (basic functionality without credential issuance)
+2. Initialize database: `sudo docker exec -i identus-postgres psql -U postgres -d identus_db < scripts/init-db.sql`
+3. Run Flask app: `python app.py` (basic functionality with mock VCs)
 
 ### Database Migrations
 
