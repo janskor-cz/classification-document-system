@@ -1,0 +1,811 @@
+# Working Package 3: Ephemeral DID-Based Document Encryption & Access
+
+## Overview
+
+This package implements client-side ephemeral DID generation for secure document access. Users generate ephemeral DID:key pairs in their browser for each document request, ensuring private keys never leave the user’s device. Documents are encrypted with ephemeral public keys and decrypted client-side, providing perfect forward secrecy.
+
+## Architecture
+
+```
+User Browser → Generates Ephemeral DID:key → Sends Public Key to Server → Document Encrypted with Public Key → User Decrypts Locally with Private Key
+```
+
+**Ephemeral DID Method**: DID:key format (`did:key:z6Mk...`) - self-contained, no registry required
+**Key Generation**: Client-side using WebCrypto API or Hyperledger Identus TypeScript SDK
+**Security Model**: Private keys never exposed to server, perfect forward secrecy
+**Integration**: Works with existing classification credential system from Working Package 1
+
+## Prerequisites
+
+- **Working Package 1** must be completed (enterprise account authentication + classification credentials)
+- **Hyperledger Identus TypeScript SDK** for client-side DID operations
+- **WebCrypto API support** in target browsers
+- **Existing classification credential verification** system
+
+## Implementation Tasks for Claude Agent
+
+### Phase 1: Client-Side Ephemeral DID Infrastructure
+
+#### Task 1.1: Hyperledger Identus TypeScript SDK Integration
+
+**File**: `frontend/static/js/identus-client.js` (new file)
+**Set up client-side Identus SDK for ephemeral DID operations**:
+
+```javascript
+// Import Hyperledger Identus SDK components
+import { Apollo, Castor } from '@hyperledger/identus-sdk';
+
+class EphemeralDIDManager {
+    constructor() {
+        this.apollo = new Apollo(); // Cryptographic operations
+        this.castor = new Castor(this.apollo); // DID operations
+    }
+    
+    async generateEphemeralDIDKey() {
+        """Generate ephemeral DID:key pair for document access"""
+        // Generate key pair using Identus Apollo
+        // Create DID:key format DID
+        // Return DID and private key (keep private key in browser only)
+        // Implementation needed
+    }
+    
+    async encryptForPublicKey(data, publicKeyDID) {
+        """Encrypt data using public key from DID:key"""
+        // Extract public key from DID:key
+        // Encrypt data using Apollo cryptographic operations
+        // Return encrypted data
+        // Implementation needed
+    }
+    
+    async decryptWithPrivateKey(encryptedData, privateKey) {
+        """Decrypt data using ephemeral private key"""
+        // Decrypt using Apollo cryptographic operations
+        // Return decrypted data
+        // Implementation needed
+    }
+    
+    destroyEphemeralKey(privateKey) {
+        """Securely destroy ephemeral private key after use"""
+        // Clear private key from memory
+        // Overwrite key data
+        // Implementation needed
+    }
+}
+```
+
+#### Task 1.2: Enhanced Database Schema for Ephemeral DID Document Access
+
+**File**: `scripts/init-db.sql`
+**Add ephemeral DID tracking tables**:
+
+```sql
+-- Track ephemeral DIDs for document access sessions
+CREATE TABLE document_access_sessions (
+    id SERIAL PRIMARY KEY,
+    user_id INTEGER REFERENCES users(id),
+    user_identity_hash VARCHAR(64) NOT NULL,
+    enterprise_account_name VARCHAR(100) NOT NULL,
+    document_id INTEGER REFERENCES documents(id),
+    ephemeral_did VARCHAR(500) NOT NULL, -- User-generated ephemeral DID:key
+    ephemeral_public_key JSONB NOT NULL, -- Public key for encryption (JWK format)
+    session_token VARCHAR(64) NOT NULL UNIQUE,
+    classification_level INTEGER NOT NULL,
+    classification_verified BOOLEAN DEFAULT false,
+    document_encrypted_with_ephemeral_key BOOLEAN DEFAULT false,
+    access_granted BOOLEAN DEFAULT false,
+    expires_at TIMESTAMP NOT NULL, -- Short expiration (e.g., 1 hour)
+    accessed_at TIMESTAMP,
+    completed_at TIMESTAMP,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Enhanced documents table with ephemeral encryption support
+ALTER TABLE documents ADD COLUMN encrypted_with_ephemeral_did BOOLEAN DEFAULT false;
+ALTER TABLE documents ADD COLUMN original_encryption_method VARCHAR(50) DEFAULT 'classification'; -- 'classification', 'ephemeral'
+
+-- Document encryption metadata for ephemeral access
+CREATE TABLE document_ephemeral_encryption (
+    id SERIAL PRIMARY KEY,
+    document_id INTEGER REFERENCES documents(id),
+    access_session_id INTEGER REFERENCES document_access_sessions(id),
+    ephemeral_did VARCHAR(500) NOT NULL,
+    encrypted_document_path VARCHAR(500) NOT NULL,
+    encryption_algorithm VARCHAR(50) DEFAULT 'ECIES-P256', -- Elliptic Curve encryption
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    accessed_at TIMESTAMP,
+    expired_at TIMESTAMP
+);
+
+-- Audit log for ephemeral DID document access
+CREATE TABLE ephemeral_did_audit_log (
+    id SERIAL PRIMARY KEY,
+    user_id INTEGER REFERENCES users(id),
+    user_identity_hash VARCHAR(64),
+    enterprise_account_name VARCHAR(100),
+    document_id INTEGER REFERENCES documents(id),
+    ephemeral_did VARCHAR(500),
+    action VARCHAR(100) NOT NULL, -- 'did_generated', 'access_requested', 'document_encrypted', 'document_decrypted', 'session_expired'
+    classification_level INTEGER,
+    session_token VARCHAR(64),
+    success BOOLEAN DEFAULT true,
+    error_details TEXT,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Indexes for performance
+CREATE INDEX idx_access_sessions_user_id ON document_access_sessions(user_id);
+CREATE INDEX idx_access_sessions_document_id ON document_access_sessions(document_id);
+CREATE INDEX idx_access_sessions_ephemeral_did ON document_access_sessions(ephemeral_did);
+CREATE INDEX idx_access_sessions_session_token ON document_access_sessions(session_token);
+CREATE INDEX idx_ephemeral_encryption_document_id ON document_ephemeral_encryption(document_id);
+CREATE INDEX idx_ephemeral_audit_user_id ON ephemeral_did_audit_log(user_id);
+CREATE INDEX idx_ephemeral_audit_document_id ON ephemeral_did_audit_log(document_id);
+```
+
+#### Task 1.3: Client-Side DID:key Generation Interface
+
+**File**: `frontend/templates/documents/access-with-ephemeral.html` (new template)
+**Create document access interface with ephemeral DID generation**:
+
+- Document access request form with classification verification
+- Ephemeral DID generation progress indicator
+- Client-side key generation status display
+- Document download and decryption interface
+- Security warnings and key handling instructions
+- Session expiration countdown
+- Automatic key destruction confirmation
+
+### Phase 2: Server-Side Ephemeral DID Integration
+
+#### Task 2.1: Ephemeral DID Document Access API
+
+**File**: `app.py` - Add ephemeral DID document access routes
+
+**New Routes to Implement**:
+
+```python
+@app.route('/documents/request-ephemeral-access/<doc_id>', methods=['POST'])
+def request_ephemeral_document_access(doc_id):
+    """Request document access with ephemeral DID"""
+    # Verify user authentication and classification credentials
+    # Validate user has required classification level for document
+    # Receive ephemeral DID public key from client
+    # Create access session with ephemeral DID
+    # Encrypt document with ephemeral public key
+    # Return encrypted document and session token
+    # Log ephemeral access request
+    # Implementation needed
+
+@app.route('/api/ephemeral/generate-session', methods=['POST'])
+def create_ephemeral_access_session():
+    """Create ephemeral access session for document"""
+    # Validate request includes:
+    #   - Document ID
+    #   - User-generated ephemeral DID (did:key format)
+    #   - Ephemeral public key (JWK format)
+    # Verify user's classification credentials
+    # Create access session record
+    # Return session token and expiration
+    # Implementation needed
+
+@app.route('/api/ephemeral/encrypt-document/<session_token>', methods=['GET'])
+def get_encrypted_document_ephemeral(session_token):
+    """Get document encrypted with ephemeral public key"""
+    # Validate session token and expiration
+    # Verify session belongs to authenticated user
+    # Encrypt document with ephemeral public key from session
+    # Return encrypted document
+    # Log successful access
+    # Mark session as completed
+    # Implementation needed
+
+@app.route('/api/ephemeral/session-status/<session_token>', methods=['GET'])
+def get_ephemeral_session_status(session_token):
+    """Get status of ephemeral access session"""
+    # Return session information, expiration, access status
+    # Implementation needed
+
+@app.route('/api/ephemeral/cleanup-expired', methods=['POST'])
+def cleanup_expired_ephemeral_sessions():
+    """Admin endpoint to cleanup expired ephemeral sessions"""
+    # Remove expired session records
+    # Delete associated temporary encrypted files
+    # Update audit logs
+    # Implementation needed
+```
+
+#### Task 2.2: Document Encryption with Ephemeral Public Keys
+
+**File**: `document_encryption.py` (new file)
+**Create ephemeral DID-based document encryption system**:
+
+```python
+from cryptography.hazmat.primitives import hashes, serialization
+from cryptography.hazmat.primitives.asymmetric import ec
+from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
+import base64
+import json
+from datetime import datetime, timedelta
+
+class EphemeralDIDDocumentEncryption:
+    """Handles document encryption using user-generated ephemeral DIDs"""
+    
+    def extract_public_key_from_did_key(self, did_key: str) -> dict:
+        """Extract public key from DID:key format"""
+        # Parse DID:key format (did:key:z6Mk...)
+        # Extract public key bytes from multicodec encoding
+        # Convert to JWK or PEM format for encryption
+        # Return public key information
+        pass
+    
+    def encrypt_document_with_ephemeral_public_key(self, 
+                                                 document_data: bytes,
+                                                 ephemeral_public_key_jwk: dict) -> dict:
+        """Encrypt document using ephemeral public key"""
+        # Generate symmetric encryption key
+        # Encrypt document with AES-256-GCM
+        # Encrypt AES key with ephemeral public key (ECIES)
+        # Return encrypted document + encrypted key
+        pass
+    
+    def prepare_ephemeral_encrypted_response(self, 
+                                           encrypted_data: dict,
+                                           session_info: dict) -> dict:
+        """Prepare response for client-side decryption"""
+        return {
+            "encryptedDocument": encrypted_data["encrypted_document"],
+            "encryptedKey": encrypted_data["encrypted_key"],
+            "ephemeralDID": session_info["ephemeral_did"],
+            "sessionToken": session_info["session_token"],
+            "expiresAt": session_info["expires_at"],
+            "encryptionAlgorithm": "ECIES-P256-AES256GCM",
+            "instructions": "Decrypt using your ephemeral private key in browser"
+        }
+    
+    def validate_ephemeral_did_format(self, did: str) -> bool:
+        """Validate DID:key format for ephemeral access"""
+        # Verify DID:key format (did:key:z6Mk...)
+        # Validate key type and encoding
+        # Return validation result
+        pass
+    
+    def cleanup_ephemeral_encrypted_files(self, session_id: int) -> bool:
+        """Clean up temporary encrypted files after session expiry"""
+        # Remove encrypted document files created for ephemeral access
+        # Update database records
+        # Log cleanup operation
+        pass
+```
+
+#### Task 2.3: Classification Credential Integration with Ephemeral Access
+
+**File**: `app.py` - Enhance classification verification for ephemeral access
+
+**Enhanced Classification Verification**:
+
+```python
+def verify_classification_for_ephemeral_access(user_identity_hash: str, 
+                                             enterprise_account_name: str,
+                                             document_id: int,
+                                             ephemeral_did: str) -> dict:
+    """Verify user's classification credentials for ephemeral document access"""
+    # Get document classification level
+    # Verify user has exact matching classification credential
+    # Validate credential is active and not expired
+    # Validate ephemeral DID format and ownership proof
+    # Create access session if authorized
+    # Return authorization result with session details
+    # Implementation needed
+
+def create_ephemeral_access_session(user_id: int,
+                                  user_identity_hash: str,
+                                  enterprise_account_name: str,
+                                  document_id: int,
+                                  ephemeral_did: str,
+                                  ephemeral_public_key_jwk: dict) -> dict:
+    """Create ephemeral access session for authorized user"""
+    # Generate unique session token
+    # Set session expiration (e.g., 1 hour)
+    # Store session with ephemeral DID information
+    # Log session creation
+    # Return session details
+    # Implementation needed
+
+def validate_ongoing_ephemeral_session(session_token: str, 
+                                     user_identity_hash: str) -> dict:
+    """Validate active ephemeral session belongs to user"""
+    # Check session exists and not expired
+    # Verify session belongs to authenticated user
+    # Validate ephemeral DID hasn't been compromised
+    # Return session validation result
+    # Implementation needed
+```
+
+### Phase 3: Frontend Ephemeral DID Integration
+
+#### Task 3.1: Client-Side Ephemeral DID Generation
+
+**File**: `frontend/static/js/ephemeral-did.js` (new file)
+**Implement browser-based ephemeral DID operations**:
+
+```javascript
+class EphemeralDIDClient {
+    constructor() {
+        this.identusSDK = null;
+        this.currentSession = null;
+        this.ephemeralKeys = new Map(); // Store active ephemeral keys
+    }
+    
+    async initializeIdentusSDK() {
+        """Initialize Hyperledger Identus TypeScript SDK in browser"""
+        // Load Identus SDK components (Apollo, Castor)
+        // Initialize cryptographic suite
+        // Set up DID:key generation capabilities
+        // Implementation needed
+    }
+    
+    async generateEphemeralDIDForDocument(documentId) {
+        """Generate ephemeral DID:key pair for specific document access"""
+        // Generate EC key pair using Identus Apollo
+        // Create DID:key format DID (did:key:z6Mk...)
+        // Store private key locally (never send to server)
+        // Return ephemeral DID and public key JWK
+        // Implementation needed
+    }
+    
+    async requestDocumentWithEphemeralDID(documentId, ephemeralDID, publicKeyJWK) {
+        """Request document access using ephemeral DID"""
+        // Send ephemeral DID and public key to server
+        // Server encrypts document with ephemeral public key
+        // Receive encrypted document and session info
+        // Return encrypted document data
+        // Implementation needed
+    }
+    
+    async decryptDocumentWithEphemeralKey(encryptedData, ephemeralPrivateKey) {
+        """Decrypt document using ephemeral private key"""
+        // Extract encrypted symmetric key
+        // Decrypt symmetric key with ephemeral private key
+        // Decrypt document with symmetric key
+        // Return decrypted document data
+        // Implementation needed
+    }
+    
+    async cleanupEphemeralSession(sessionToken) {
+        """Clean up ephemeral session and destroy keys"""
+        // Notify server of session completion
+        // Remove ephemeral keys from browser memory
+        // Clear session data
+        // Overwrite sensitive data
+        // Implementation needed
+    }
+    
+    // Fallback WebCrypto implementation if Identus SDK not available
+    async generateEphemeralDIDWithWebCrypto() {
+        """Generate ephemeral DID:key using WebCrypto API as fallback"""
+        // Generate P-256 key pair using WebCrypto
+        // Create DID:key format manually
+        // Return DID and key pair
+        // Implementation needed
+    }
+}
+
+// Initialize ephemeral DID client when page loads
+document.addEventListener('DOMContentLoaded', async function() {
+    window.ephemeralDIDClient = new EphemeralDIDClient();
+    await window.ephemeralDIDClient.initializeIdentusSDK();
+});
+```
+
+#### Task 3.2: Document Access Interface with Ephemeral DID
+
+**File**: `frontend/templates/documents/ephemeral-access.html` (new template)
+**Create secure document access interface**:
+
+- Document request form with classification level display
+- Ephemeral DID generation progress indicator
+- Client-side encryption/decryption status
+- Document download progress
+- Security warnings about private key handling
+- Session expiration timer
+- Automatic cleanup confirmation
+- Error handling for failed ephemeral operations
+
+#### Task 3.3: Enhanced Document Browse Interface
+
+**File**: `frontend/templates/documents/browse.html` (enhance existing)
+**Add ephemeral access options to document listing**:
+
+- Document list with classification indicators
+- “Secure Access” button for ephemeral DID access
+- Classification credential status for each document
+- Access history with ephemeral session tracking
+- Security level indicators (standard vs ephemeral access)
+
+### Phase 4: Backend Document Encryption Enhancement
+
+#### Task 4.1: Ephemeral DID Document Processing
+
+**File**: `app.py` - Enhanced document management with ephemeral encryption
+
+**Enhanced Document Routes**:
+
+```python
+@app.route('/documents/upload', methods=['POST'])
+def enhanced_document_upload_with_ephemeral_support():
+    """Enhanced document upload supporting both standard and ephemeral encryption"""
+    # Process document upload with classification level validation
+    # Option 1: Standard classification-based encryption
+    # Option 2: Prepare for ephemeral DID-based access
+    # Store document with encryption method metadata
+    # Support both encryption approaches
+    # Implementation needed
+
+@app.route('/api/documents/access-methods/<doc_id>', methods=['GET'])
+def get_document_access_methods(doc_id):
+    """Get available access methods for document"""
+    # Return document information and available access methods:
+    # - Standard classification-based access
+    # - Ephemeral DID-based access
+    # - User's authorization for each method
+    # Implementation needed
+
+@app.route('/api/documents/prepare-ephemeral/<doc_id>', methods=['POST'])
+def prepare_document_for_ephemeral_access(doc_id):
+    """Prepare document for ephemeral DID-based access"""
+    # Validate user's classification credentials
+    # Create temporary encrypted version for ephemeral access
+    # Set up access session with expiration
+    # Return session preparation status
+    # Implementation needed
+```
+
+#### Task 4.2: Integration with Existing Classification System
+
+**File**: `classification_manager.py` (enhance existing from Working Package 1)
+**Add ephemeral DID support to classification management**:
+
+```python
+class ClassificationManager:
+    """Enhanced classification manager with ephemeral DID support"""
+    
+    def verify_classification_for_ephemeral_access(self, 
+                                                 user_identity_hash: str,
+                                                 enterprise_account_name: str,
+                                                 document_classification_level: int,
+                                                 ephemeral_did: str) -> dict:
+        """Verify classification credentials for ephemeral DID access"""
+        # Check user has required classification credential
+        # Validate ephemeral DID format
+        # Ensure ephemeral DID is genuinely user-generated
+        # Return authorization with ephemeral context
+        # Implementation needed
+    
+    def log_ephemeral_access_attempt(self, 
+                                   user_info: dict,
+                                   document_info: dict,
+                                   ephemeral_did: str,
+                                   access_granted: bool,
+                                   session_token: str) -> None:
+        """Log ephemeral DID document access attempt"""
+        # Record access attempt with ephemeral DID context
+        # Include classification verification results
+        # Log session information and expiration
+        # Implementation needed
+    
+    def get_user_ephemeral_access_history(self, user_identity_hash: str) -> list:
+        """Get user's ephemeral DID access history"""
+        # Return history of ephemeral sessions
+        # Include document accessed, classification levels
+        # Show session duration and completion status
+        # Implementation needed
+```
+
+### Phase 5: Security and Session Management
+
+#### Task 5.1: Ephemeral Session Management
+
+**File**: `ephemeral_session_manager.py` (new file)
+**Create comprehensive ephemeral session management**:
+
+```python
+from datetime import datetime, timedelta
+import secrets
+import json
+
+class EphemeralSessionManager:
+    """Manages ephemeral DID sessions for document access"""
+    
+    def create_ephemeral_session(self, 
+                               user_info: dict,
+                               document_id: int,
+                               ephemeral_did: str,
+                               ephemeral_public_key_jwk: dict) -> dict:
+        """Create new ephemeral access session"""
+        session_token = secrets.token_urlsafe(32)
+        expires_at = datetime.now() + timedelta(hours=1)  # 1 hour expiration
+        
+        session_data = {
+            "session_token": session_token,
+            "user_id": user_info["user_id"],
+            "user_identity_hash": user_info["identity_hash"],
+            "enterprise_account_name": user_info["enterprise_account_name"],
+            "document_id": document_id,
+            "ephemeral_did": ephemeral_did,
+            "ephemeral_public_key": ephemeral_public_key_jwk,
+            "expires_at": expires_at,
+            "status": "active"
+        }
+        
+        # Store session in database
+        # Log session creation
+        # Implementation needed
+        return session_data
+    
+    def validate_ephemeral_session(self, session_token: str, user_identity_hash: str) -> dict:
+        """Validate ephemeral session is active and belongs to user"""
+        # Check session exists and not expired
+        # Verify session ownership
+        # Return validation result
+        # Implementation needed
+    
+    def expire_ephemeral_session(self, session_token: str) -> bool:
+        """Manually expire ephemeral session"""
+        # Mark session as expired
+        # Clean up associated encrypted files
+        # Log session expiration
+        # Implementation needed
+    
+    def cleanup_expired_sessions(self) -> dict:
+        """Background task to cleanup expired ephemeral sessions"""
+        # Find expired sessions
+        # Remove encrypted files
+        # Update database records
+        # Return cleanup statistics
+        # Implementation needed
+    
+    def get_active_ephemeral_sessions(self, user_identity_hash: str) -> list:
+        """Get user's active ephemeral sessions"""
+        # Return active sessions with expiration info
+        # Implementation needed
+```
+
+#### Task 5.2: Enhanced Security Validation
+
+**File**: `security_validator.py` (new file)
+**Create security validation for ephemeral DID operations**:
+
+```python
+class EphemeralDIDSecurityValidator:
+    """Security validation for ephemeral DID operations"""
+    
+    def validate_ephemeral_did_authenticity(self, ephemeral_did: str,
+                                          provided_public_key: dict,
+                                          proof_of_generation: str = None) -> dict:
+        """Validate ephemeral DID was genuinely generated by user"""
+        # Verify DID:key format correctness
+        # Validate public key matches DID
+        # Optional: Verify proof of key generation (signature)
+        # Check DID is not reused from previous sessions
+        # Return validation result
+        # Implementation needed
+    
+    def detect_ephemeral_did_reuse(self, ephemeral_did: str) -> bool:
+        """Detect if ephemeral DID has been used before"""
+        # Check against database of used ephemeral DIDs
+        # Return true if DID has been used previously
+        # Implementation needed
+    
+    def validate_session_security(self, session_data: dict) -> dict:
+        """Validate ephemeral session security parameters"""
+        # Check session hasn't been tampered with
+        # Validate expiration timing
+        # Verify user context consistency
+        # Return security assessment
+        # Implementation needed
+    
+    def generate_ephemeral_did_usage_report(self, 
+                                          enterprise_account_name: str,
+                                          time_period: timedelta) -> dict:
+        """Generate security report for ephemeral DID usage"""
+        # Analyze ephemeral DID usage patterns
+        # Detect suspicious activity
+        # Return security metrics and alerts
+        # Implementation needed
+```
+
+### Phase 6: Administrative Monitoring and Control
+
+#### Task 6.1: Ephemeral DID Administration Interface
+
+**File**: `frontend/templates/admin/ephemeral-did-monitor.html` (new template)
+**Create admin monitoring for ephemeral DID operations**:
+
+- Active ephemeral sessions dashboard
+- Session expiration monitoring
+- Document access patterns with ephemeral DIDs
+- Security alerts for suspicious ephemeral DID usage
+- Cleanup and maintenance controls
+- Performance metrics for ephemeral operations
+- Enterprise account-specific ephemeral usage analytics
+
+#### Task 6.2: Administrative Control Routes
+
+**File**: `app.py` - Add admin routes for ephemeral DID management
+
+**Admin Routes to Implement**:
+
+```python
+@app.route('/admin/ephemeral-sessions', methods=['GET'])
+def admin_ephemeral_sessions_dashboard():
+    """Administrative dashboard for ephemeral DID sessions"""
+    # Show active sessions across all users
+    # Display session security metrics
+    # Provide cleanup and monitoring controls
+    # Implementation needed
+
+@app.route('/api/admin/ephemeral/force-expire/<session_token>', methods=['POST'])
+def admin_force_expire_ephemeral_session(session_token):
+    """Admin force-expiration of ephemeral session"""
+    # Validate admin privileges
+    # Force expire specific ephemeral session
+    # Log admin action
+    # Clean up associated resources
+    # Implementation needed
+
+@app.route('/api/admin/ephemeral/security-report', methods=['GET'])
+def get_ephemeral_did_security_report():
+    """Get security report for ephemeral DID operations"""
+    # Generate comprehensive security analysis
+    # Include usage patterns, potential security issues
+    # Return report with recommendations
+    # Implementation needed
+
+@app.route('/api/admin/ephemeral/cleanup-all-expired', methods=['POST'])
+def admin_cleanup_all_expired_ephemeral():
+    """Admin cleanup of all expired ephemeral sessions"""
+    # Clean up all expired sessions
+    # Remove associated encrypted files
+    # Update database records
+    # Return cleanup statistics
+    # Implementation needed
+```
+
+### Phase 7: Testing and Validation
+
+#### Task 7.1: Ephemeral DID Testing Strategy
+
+**Test Categories**:
+
+1. **Client-Side DID Generation Testing**:
+- Verify DID:key format generation
+- Test key pair generation and validation
+- Validate private key never leaves browser
+1. **Document Encryption Testing**:
+- Test encryption with ephemeral public keys
+- Verify document decryption with ephemeral private keys
+- Test different document sizes and types
+1. **Session Management Testing**:
+- Test session creation and expiration
+- Verify session security and validation
+- Test concurrent ephemeral sessions
+1. **Integration Testing**:
+- Test ephemeral DID with existing classification system
+- Verify enterprise account integration
+- Test complete workflow from credential verification to document decryption
+1. **Security Testing**:
+- Test ephemeral DID reuse prevention
+- Verify private key isolation
+- Test session hijacking prevention
+
+#### Task 7.2: Performance and Security Validation
+
+**Test Scenarios**:
+
+1. **Standard Operation Flow**:
+- User requests document → Ephemeral DID generated → Document encrypted → User decrypts
+1. **Session Expiration Handling**:
+- Verify expired sessions are properly cleaned up
+- Test user notification of session expiration
+1. **Concurrent Access Testing**:
+- Multiple users accessing different documents with ephemeral DIDs
+- Multiple ephemeral sessions per user
+1. **Error Handling**:
+- Failed ephemeral DID generation
+- Network interruption during encryption/decryption
+- Browser compatibility issues
+
+### Phase 8: Configuration and Deployment
+
+#### Task 8.1: Configuration for Ephemeral DID Operations
+
+**File**: `config.py` - Add ephemeral DID configuration
+
+**New Configuration Sections**:
+
+```python
+@dataclass
+class EphemeralDIDConfig:
+    enable_ephemeral_did_access: bool = True
+    ephemeral_session_timeout_hours: int = 1
+    max_concurrent_ephemeral_sessions_per_user: int = 5
+    ephemeral_did_format: str = 'did:key'  # Support for did:key format
+    allow_did_reuse_within_hours: int = 0  # Prevent DID reuse
+    cleanup_expired_sessions_interval_minutes: int = 15
+    
+@dataclass  
+class EphemeralEncryptionConfig:
+    encryption_algorithm: str = 'ECIES-P256-AES256GCM'
+    symmetric_key_size: int = 256  # AES-256
+    ephemeral_key_curve: str = 'P-256'  # NIST P-256 curve
+    enable_encryption_integrity_check: bool = True
+    
+@dataclass
+class EphemeralSecurityConfig:
+    require_proof_of_ephemeral_key_generation: bool = False  # Future enhancement
+    enable_ephemeral_did_rate_limiting: bool = True
+    max_ephemeral_requests_per_hour: int = 20
+    log_all_ephemeral_operations: bool = True
+    enable_ephemeral_session_monitoring: bool = True
+```
+
+#### Task 8.2: Integration with Existing Working Packages
+
+**Integration Points**:
+
+**With Working Package 1 (Enterprise Authentication)**:
+
+- Use existing enterprise account and classification credential verification
+- Integrate with existing user session management
+- Leverage existing audit logging infrastructure
+- Build upon existing admin interfaces
+
+**Database Integration**:
+
+- Extend existing database schema with ephemeral DID tables
+- Maintain referential integrity with existing user and document tables
+- Use existing enterprise account structure for ephemeral operations
+
+**Security Integration**:
+
+- Combine ephemeral DID security with existing classification verification
+- Integrate with existing audit trail and compliance logging
+- Use existing enterprise account recovery mechanisms as fallback
+
+## Success Criteria
+
+### Functional Requirements Met:
+
+- ✅ Client-side ephemeral DID:key generation for document access
+- ✅ Document encryption using user-generated ephemeral public keys
+- ✅ Client-side document decryption with ephemeral private keys
+- ✅ Private keys never exposed to server infrastructure
+- ✅ Perfect forward secrecy for document access
+- ✅ Integration with existing classification credential system
+- ✅ Session management with automatic expiration and cleanup
+- ✅ Complete audit trail for ephemeral DID operations
+
+### Security Requirements:
+
+- ✅ Private keys generated and stored only on user’s device
+- ✅ Ephemeral keys automatically destroyed after use
+- ✅ Session-based access with short expiration times
+- ✅ Prevention of ephemeral DID reuse
+- ✅ Integration with enterprise account security model
+- ✅ Complete audit trail for all ephemeral operations
+
+### Performance Targets:
+
+- ✅ Ephemeral DID generation < 2 seconds
+- ✅ Document encryption with ephemeral keys < 5 seconds
+- ✅ Client-side decryption < 3 seconds
+- ✅ Session cleanup < 1 second
+- ✅ Support multiple concurrent ephemeral sessions per user
+
+### User Experience Requirements:
+
+- ✅ Transparent ephemeral DID generation (user doesn’t need to understand technical details)
+- ✅ Clear security indicators and session status
+- ✅ Automatic cleanup and key destruction
+- ✅ Error handling and recovery for failed operations
+- ✅ Integration with existing document browse and access workflows
