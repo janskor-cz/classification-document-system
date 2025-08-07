@@ -535,9 +535,10 @@ def dashboard():
         if conn:
             try:
                 with conn.cursor() as cursor:
-                    # Get user's issued credentials
+                    # Get user's issued credentials with all needed fields
                     cursor.execute("""
-                        SELECT credential_type, classification_level, issued_at, status
+                        SELECT id, credential_category, credential_type, classification_level, 
+                               identus_record_id, invitation_url, issued_at, expires_at, status
                         FROM issued_credentials 
                         WHERE user_id = %s AND status = 'issued'
                         ORDER BY issued_at DESC
@@ -545,15 +546,59 @@ def dashboard():
                     
                     db_credentials = cursor.fetchall()
                     
-                    # Format credentials for display
+                    # Format credentials for display and fetch VCs
                     for cred in db_credentials:
+                        # Create credential display object first
                         credential_display = {
+                            'id': cred['id'],
                             'name': f"{cred['credential_type'].title()} Credential",
                             'type': cred['credential_type'],
+                            'category': cred['credential_category'],
                             'classification_level': cred.get('classification_level'),
+                            'identus_record_id': cred.get('identus_record_id'),
+                            'invitation_url': cred.get('invitation_url'),
                             'issued_date': cred['issued_at'],
+                            'expires_at': cred.get('expires_at'),
                             'status': cred['status']
                         }
+                        
+                        # Fetch the actual VC from Identus if available, otherwise create mock
+                        vc_data = None
+                        if cred.get('identus_record_id'):
+                            try:
+                                from identus_wrapper import IdentusDashboardClient
+                                identus_client = IdentusDashboardClient()
+                                vc_data = identus_client.get_verifiable_credential(cred['identus_record_id'])
+                                
+                                # If no real VC found, create a mock from database data
+                                if vc_data is None:
+                                    vc_data = identus_client.create_mock_vc_from_database(credential_display)
+                                    print(f"📋 Created mock VC for {cred['identus_record_id']}")
+                                else:
+                                    print(f"✅ Retrieved real VC for {cred['identus_record_id']}")
+                                    
+                            except Exception as e:
+                                print(f"⚠️ Could not fetch VC for {cred['identus_record_id']}: {e}")
+                                # Fallback to creating mock VC from database data
+                                try:
+                                    from identus_wrapper import IdentusDashboardClient
+                                    identus_client = IdentusDashboardClient()
+                                    vc_data = identus_client.create_mock_vc_from_database(credential_display)
+                                    print(f"📋 Created fallback mock VC due to error")
+                                except Exception as mock_error:
+                                    print(f"❌ Could not create mock VC: {mock_error}")
+                                    vc_data = {"error": f"Could not fetch or create VC: {str(e)}"}
+                        
+                        # Add VC data to credential display
+                        credential_display['verifiable_credential'] = vc_data
+                        
+                        # If we have a mock VC with expiration date, use it for display
+                        if vc_data and vc_data.get('expirationDate') and not credential_display.get('expires_at'):
+                            try:
+                                credential_display['expires_at'] = datetime.fromisoformat(vc_data['expirationDate'].replace('Z', '+00:00'))
+                            except Exception:
+                                pass
+                                
                         credentials.append(credential_display)
                     
                     # Get credential requests
@@ -633,6 +678,96 @@ def login():
 def upload_document():
     """Document upload page"""
     return render_template('documents/upload.html')
+
+def is_admin_user(user):
+    """Check if user has admin privileges"""
+    # Check if user is authenticated
+    if not user or not user.get('is_authenticated'):
+        return False
+    
+    # Admin role criteria (you can modify this logic)
+    admin_emails = ['admin@company.com']  # Specific admin emails
+    admin_job_titles = ['System Administrator', 'Admin', 'Administrator']  # Admin job titles
+    
+    user_email = user.get('email', '').lower()
+    user_job_title = user.get('job_title', '')
+    
+    # Check if user meets admin criteria
+    return (user_email in admin_emails or 
+            user_job_title in admin_job_titles or
+            'admin' in user_email.lower())
+
+@app.route('/admin')
+def admin_panel():
+    """Admin panel for managing credential requests"""
+    try:
+        # Check if user is authenticated and has admin privileges
+        print(f"🔍 Admin panel access attempt - User authenticated: {current_user.get('is_authenticated')}")
+        print(f"🔍 Current user: {current_user.get('email', 'None')} - {current_user.get('full_name', 'None')}")
+        
+        if not current_user.get('is_authenticated'):
+            print("❌ User not authenticated, redirecting to login")
+            return redirect(url_for('login'))
+            
+        if not is_admin_user(current_user):
+            print(f"❌ User {current_user.get('email')} is not admin, redirecting to dashboard")
+            flash('Access denied. Admin privileges required.', 'error')
+            return redirect(url_for('dashboard'))
+            
+        print(f"✅ Admin access granted to {current_user.get('email')}")
+        
+        # Get pending credential requests
+        pending_requests = []
+        conn = get_db_connection()
+        if conn:
+            try:
+                with conn.cursor() as cursor:
+                    cursor.execute("""
+                        SELECT cr.id, cr.user_id, cr.credential_type, cr.credential_category, 
+                               cr.status, cr.business_justification, cr.department_approval,
+                               cr.requested_at, u.full_name, u.email, u.department
+                        FROM credential_requests cr
+                        JOIN users u ON cr.user_id = u.id
+                        WHERE cr.status = 'pending'
+                        ORDER BY cr.requested_at DESC
+                    """)
+                    
+                    rows = cursor.fetchall()
+                    for row in rows:
+                        pending_requests.append({
+                            'id': row['id'],
+                            'user_id': row['user_id'],
+                            'user_name': row['full_name'],
+                            'user_email': row['email'],
+                            'user_department': row['department'],
+                            'credential_type': row['credential_type'],
+                            'credential_category': row['credential_category'],
+                            'status': row['status'],
+                            'business_justification': row['business_justification'],
+                            'department_approval': row['department_approval'],
+                            'requested_at': row['requested_at']
+                        })
+                    
+                    print(f"📊 Found {len(pending_requests)} pending credential requests for admin")
+                        
+            except Exception as db_error:
+                print(f"⚠️ Database error in admin panel: {db_error}")
+            finally:
+                conn.close()
+        
+        # Calculate stats for the admin panel
+        high_level_count = len([req for req in pending_requests if req['credential_type'] in ['internal', 'confidential']])
+        unique_users = len(set(req['user_id'] for req in pending_requests))
+        
+        return render_template('admin/credential-requests.html', 
+                             pending_requests=pending_requests,
+                             high_level_count=high_level_count,
+                             unique_users=unique_users)
+        
+    except Exception as e:
+        print(f"❌ Admin panel error: {e}")
+        flash('Error loading admin panel', 'error')
+        return redirect(url_for('dashboard'))
 
 # ==================== AUTHENTICATION ROUTES ====================
 
@@ -846,6 +981,212 @@ def get_user_max_classification_level():
         
     except Exception as e:
         return jsonify({'error': str(e)}), 500
+
+# ==================== CREDENTIAL REQUEST ROUTES ====================
+
+@app.route('/api/credentials/request', methods=['POST'])
+def request_credential():
+    """Handle credential request submission"""
+    try:
+        data = request.get_json()
+        
+        if not data:
+            return jsonify({'success': False, 'error': 'No data provided'}), 400
+            
+        credential_type = data.get('credentialType')
+        business_justification = data.get('businessJustification')
+        department_approval = data.get('departmentApproval')
+        
+        if not credential_type or not business_justification:
+            return jsonify({'success': False, 'error': 'Missing required fields'}), 400
+        
+        # Determine credential category and classification level
+        if credential_type == 'basic_enterprise':
+            category = 'enterprise'
+            classification_level = None
+        else:
+            category = 'classification'
+            classification_level = {'public': 1, 'internal': 2, 'confidential': 3}.get(credential_type)
+        
+        # Insert credential request into database
+        conn = get_db_connection()
+        if conn:
+            try:
+                with conn.cursor() as cursor:
+                    cursor.execute("""
+                        INSERT INTO credential_requests 
+                        (user_id, identity_hash, enterprise_account_name, credential_category, 
+                         credential_type, status, business_justification, department_approval)
+                        VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+                        RETURNING id
+                    """, (
+                        current_user.get('user_id'),
+                        current_user.get('identity_hash'),
+                        current_user.get('enterprise_account_name'),
+                        category,
+                        credential_type,
+                        'pending',
+                        business_justification,
+                        department_approval
+                    ))
+                    
+                    request_id = cursor.fetchone()['id']
+                    conn.commit()
+                    
+                    # Log the request in audit trail
+                    cursor.execute("""
+                        INSERT INTO credential_audit_log 
+                        (user_id, identity_hash, enterprise_account_name, action, 
+                         credential_category, credential_type, details, performed_by)
+                        VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+                    """, (
+                        current_user.get('user_id'),
+                        current_user.get('identity_hash'),
+                        current_user.get('enterprise_account_name'),
+                        'request',
+                        category,
+                        credential_type,
+                        json.dumps({
+                            'request_id': request_id,
+                            'justification': business_justification,
+                            'department_approval': department_approval
+                        }),
+                        current_user.get('email')
+                    ))
+                    conn.commit()
+                    
+                    return jsonify({
+                        'success': True, 
+                        'message': 'Credential request submitted successfully',
+                        'request_id': request_id
+                    })
+                    
+            except Exception as db_error:
+                print(f"⚠️ Database error in credential request: {db_error}")
+                conn.rollback()
+                return jsonify({'success': False, 'error': 'Database error'}), 500
+            finally:
+                conn.close()
+        else:
+            return jsonify({'success': False, 'error': 'Database connection failed'}), 500
+            
+    except Exception as e:
+        print(f"❌ Credential request error: {e}")
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+@app.route('/api/admin/credential-requests/<int:request_id>', methods=['POST'])
+def handle_credential_request(request_id):
+    """Handle approve/deny of credential requests"""
+    try:
+        # Check admin privileges
+        if not current_user.get('is_authenticated'):
+            return jsonify({'success': False, 'error': 'Authentication required'}), 401
+            
+        if not is_admin_user(current_user):
+            return jsonify({'success': False, 'error': 'Admin privileges required'}), 403
+        
+        data = request.get_json()
+        
+        if not data:
+            return jsonify({'success': False, 'error': 'No data provided'}), 400
+            
+        action = data.get('action')  # 'approve' or 'deny'
+        reason = data.get('reason')  # For deny actions
+        
+        if action not in ['approve', 'deny']:
+            return jsonify({'success': False, 'error': 'Invalid action'}), 400
+        
+        conn = get_db_connection()
+        if conn:
+            try:
+                with conn.cursor() as cursor:
+                    # Get the request details first
+                    cursor.execute("""
+                        SELECT cr.*, u.full_name, u.email, u.identity_hash, u.enterprise_account_name
+                        FROM credential_requests cr
+                        JOIN users u ON cr.user_id = u.id
+                        WHERE cr.id = %s AND cr.status = 'pending'
+                    """, (request_id,))
+                    
+                    request_row = cursor.fetchone()
+                    if not request_row:
+                        return jsonify({'success': False, 'error': 'Request not found or already processed'}), 404
+                    
+                    # Update the request status
+                    new_status = 'approved' if action == 'approve' else 'denied'
+                    cursor.execute("""
+                        UPDATE credential_requests 
+                        SET status = %s, processed_at = NOW(), processed_by = %s, denial_reason = %s
+                        WHERE id = %s
+                    """, (new_status, current_user.get('email', 'admin'), reason, request_id))
+                    
+                    # If approved, create an issued credential record
+                    if action == 'approve':
+                        # Determine classification level
+                        classification_level = None
+                        if request_row['credential_type'] in ['public', 'internal', 'confidential']:
+                            classification_level = {'public': 1, 'internal': 2, 'confidential': 3}[request_row['credential_type']]
+                        
+                        # Insert into issued_credentials table
+                        cursor.execute("""
+                            INSERT INTO issued_credentials 
+                            (user_id, identity_hash, enterprise_account_name, credential_category, 
+                             credential_type, classification_level, identus_record_id, status, issued_at)
+                            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, NOW())
+                        """, (
+                            request_row['user_id'],
+                            request_row['identity_hash'],
+                            request_row['enterprise_account_name'],
+                            request_row['credential_category'],
+                            request_row['credential_type'],
+                            classification_level,
+                            f"approved_request_{request_id}_{datetime.now().strftime('%Y%m%d_%H%M%S')}",  # Mock record ID
+                            'issued'
+                        ))
+                    
+                    # Log the admin action in audit trail
+                    cursor.execute("""
+                        INSERT INTO credential_audit_log 
+                        (user_id, identity_hash, enterprise_account_name, action, 
+                         credential_category, credential_type, details, performed_by)
+                        VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+                    """, (
+                        request_row['user_id'],
+                        request_row['identity_hash'],
+                        request_row['enterprise_account_name'],
+                        action,
+                        request_row['credential_category'],
+                        request_row['credential_type'],
+                        json.dumps({
+                            'request_id': request_id,
+                            'admin_action': action,
+                            'reason': reason,
+                            'processed_by': current_user.get('email', 'admin')
+                        }),
+                        current_user.get('email', 'admin')
+                    ))
+                    
+                    conn.commit()
+                    
+                    return jsonify({
+                        'success': True, 
+                        'message': f'Credential request {action}d successfully',
+                        'action': action,
+                        'user_name': request_row['full_name']
+                    })
+                    
+            except Exception as db_error:
+                print(f"⚠️ Database error in credential {action}: {db_error}")
+                conn.rollback()
+                return jsonify({'success': False, 'error': 'Database error'}), 500
+            finally:
+                conn.close()
+        else:
+            return jsonify({'success': False, 'error': 'Database connection failed'}), 500
+            
+    except Exception as e:
+        print(f"❌ Credential {action} error: {e}")
+        return jsonify({'success': False, 'error': str(e)}), 500
 
 # ==================== API ROUTES ====================
 

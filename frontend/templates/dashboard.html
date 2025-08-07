@@ -96,6 +96,9 @@
                     <a href="{{ url_for('upload_document') }}" class="btn btn-primary">
                         <i class="fas fa-upload me-2"></i>Upload Document
                     </a>
+                    <button class="btn btn-outline-success" onclick="showCredentialRequestForm()">
+                        <i class="fas fa-plus me-2"></i>Request Credential
+                    </button>
                     <button class="btn btn-outline-secondary" onclick="refreshDashboard()">
                         <i class="fas fa-sync-alt me-2"></i>Refresh Dashboard
                     </button>
@@ -131,6 +134,92 @@
     </div>
 </div>
 
+<!-- Credential Request Section -->
+<div class="row mb-4" id="credential-request-section" style="display: none;">
+    <div class="col-12">
+        <div class="card border-success">
+            <div class="card-header bg-light">
+                <h5 class="mb-0">
+                    <i class="fas fa-plus-circle me-2 text-success"></i>Request New Credential
+                    <button type="button" class="btn-close float-end" onclick="hideCredentialRequestForm()"></button>
+                </h5>
+            </div>
+            <div class="card-body">
+                <form id="credentialRequestForm">
+                    <div class="row">
+                        <div class="col-md-6">
+                            <div class="mb-3">
+                                <label for="credentialType" class="form-label">
+                                    <i class="fas fa-certificate me-1"></i>Credential Type
+                                </label>
+                                <select class="form-select" id="credentialType" required>
+                                    <option value="">Select credential type...</option>
+                                    <option value="basic_enterprise">Basic Enterprise Access</option>
+                                    <option value="public">Public Classification (Level 1)</option>
+                                    <option value="internal">Internal Classification (Level 2)</option>
+                                    <option value="confidential">Confidential Classification (Level 3)</option>
+                                </select>
+                            </div>
+                        </div>
+                        <div class="col-md-6">
+                            <div class="mb-3">
+                                <label for="department" class="form-label">
+                                    <i class="fas fa-building me-1"></i>Department
+                                </label>
+                                <input type="text" class="form-control" id="department" 
+                                       value="{{ current_user.department }}" readonly>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <div class="mb-3">
+                        <label for="businessJustification" class="form-label">
+                            <i class="fas fa-file-alt me-1"></i>Business Justification <span class="text-danger">*</span>
+                        </label>
+                        <textarea class="form-control" id="businessJustification" rows="3" required
+                                  placeholder="Please explain why you need this credential and how it will be used..."></textarea>
+                    </div>
+                    
+                    <div class="row">
+                        <div class="col-md-6">
+                            <div class="mb-3">
+                                <label for="departmentApproval" class="form-label">
+                                    <i class="fas fa-user-check me-1"></i>Department Approver
+                                </label>
+                                <input type="text" class="form-control" id="departmentApproval" 
+                                       placeholder="Name of department manager/approver">
+                            </div>
+                        </div>
+                        <div class="col-md-6">
+                            <div class="mb-3">
+                                <label class="form-label">
+                                    <i class="fas fa-info-circle me-1"></i>Enterprise Account
+                                </label>
+                                <input type="text" class="form-control" 
+                                       value="{{ current_user.enterprise_account_display }}" readonly>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <div class="alert alert-info">
+                        <i class="fas fa-info-circle me-2"></i>
+                        <strong>Note:</strong> Credential requests require approval. You will be notified when your request is processed.
+                    </div>
+                    
+                    <div class="d-flex gap-2">
+                        <button type="submit" class="btn btn-success">
+                            <i class="fas fa-paper-plane me-2"></i>Submit Request
+                        </button>
+                        <button type="button" class="btn btn-outline-secondary" onclick="hideCredentialRequestForm()">
+                            <i class="fas fa-times me-2"></i>Cancel
+                        </button>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+</div>
+
 <div class="row">
     <div class="col-12">
         <div class="card">
@@ -147,7 +236,7 @@
                             <div class="card border-left-primary">
                                 <div class="card-body">
                                     <div class="d-flex justify-content-between align-items-start">
-                                        <div>
+                                        <div class="flex-grow-1">
                                             <h6 class="card-title mb-1">
                                                 <i class="fas fa-certificate me-1"></i>{{ credential.name }}
                                             </h6>
@@ -168,15 +257,109 @@
                                                     <span class="badge bg-light text-dark ms-1">Level {{ credential.classification_level }}</span>
                                                 {% endif %}
                                             </div>
-                                            <small class="text-muted">
-                                                <i class="fas fa-calendar me-1"></i>
-                                                Issued: {{ credential.issued_date|datetime if credential.issued_date else 'Unknown' }}
-                                            </small>
+                                            <div class="credential-dates">
+                                                <small class="text-muted d-block">
+                                                    <i class="fas fa-calendar me-1"></i>
+                                                    Issued: {{ credential.issued_date|datetime if credential.issued_date else 'Unknown' }}
+                                                </small>
+                                                {% if credential.expires_at %}
+                                                <small class="text-muted d-block mt-1">
+                                                    <i class="fas fa-clock me-1"></i>
+                                                    <span class="expiry-date" data-expiry="{{ credential.expires_at }}">
+                                                        Expires: {{ credential.expires_at|datetime }}
+                                                    </span>
+                                                </small>
+                                                {% else %}
+                                                <small class="text-success d-block mt-1">
+                                                    <i class="fas fa-infinity me-1"></i>
+                                                    No expiration
+                                                </small>
+                                                {% endif %}
+                                            </div>
                                         </div>
                                         <div class="text-end">
-                                            <span class="badge bg-success">
+                                            <span class="badge bg-success mb-2">
                                                 <i class="fas fa-check-circle me-1"></i>{{ credential.status|title }}
                                             </span>
+                                            <br>
+                                            <button class="btn btn-sm btn-outline-primary" 
+                                                    type="button" 
+                                                    data-bs-toggle="collapse" 
+                                                    data-bs-target="#credential-{{ loop.index }}" 
+                                                    aria-expanded="false">
+                                                <i class="fas fa-chevron-down me-1"></i>Details
+                                            </button>
+                                        </div>
+                                    </div>
+                                    
+                                    <!-- Collapsible credential details with full VC -->
+                                    <div class="collapse mt-3" id="credential-{{ loop.index }}">
+                                        <div class="card card-body bg-light">
+                                            <h6 class="mb-3">
+                                                <i class="fas fa-certificate me-2"></i>Verifiable Credential
+                                                <span class="badge bg-primary ms-2">{{ credential.identus_record_id[:8] if credential.identus_record_id else 'N/A' }}</span>
+                                                {% if credential.verifiable_credential and credential.verifiable_credential.get('_metadata', {}).get('source') == 'mock_from_database' %}
+                                                <span class="badge bg-warning ms-1" title="This is a demonstration VC created from database data">
+                                                    <i class="fas fa-info-circle me-1"></i>Demo VC
+                                                </span>
+                                                {% elif credential.verifiable_credential and not credential.verifiable_credential.get('error') %}
+                                                <span class="badge bg-success ms-1" title="This is a real VC from Identus">
+                                                    <i class="fas fa-check-circle me-1"></i>Real VC
+                                                </span>
+                                                {% endif %}
+                                            </h6>
+                                            
+                                            {% if credential.verifiable_credential %}
+                                            <div class="vc-container mb-3">
+                                                <div class="d-flex justify-content-between align-items-center mb-2">
+                                                    <small class="text-muted">
+                                                        <i class="fas fa-file-code me-1"></i>Full Verifiable Credential JSON
+                                                    </small>
+                                                    <div>
+                                                        <button class="btn btn-sm btn-outline-secondary me-1" onclick="copyToClipboard('vc-{{ loop.index }}')">
+                                                            <i class="fas fa-copy me-1"></i>Copy
+                                                        </button>
+                                                        <button class="btn btn-sm btn-outline-info" onclick="prettyPrintVC('vc-{{ loop.index }}')">
+                                                            <i class="fas fa-expand-alt me-1"></i>Format
+                                                        </button>
+                                                    </div>
+                                                </div>
+                                                
+                                                <pre id="vc-{{ loop.index }}" class="vc-json bg-dark text-light p-3 rounded" style="max-height: 400px; overflow-y: auto; font-size: 0.85em;">{{ credential.verifiable_credential | tojson(indent=2) }}</pre>
+                                            </div>
+                                            {% else %}
+                                            <div class="alert alert-warning">
+                                                <i class="fas fa-exclamation-triangle me-2"></i>
+                                                No Verifiable Credential data available for this record.
+                                                {% if credential.identus_record_id %}
+                                                <br><small class="text-muted">Record ID: {{ credential.identus_record_id }}</small>
+                                                {% endif %}
+                                            </div>
+                                            {% endif %}
+                                            
+                                            <!-- Summary information -->
+                                            <div class="row mt-3 pt-2 border-top">
+                                                <div class="col-sm-4">
+                                                    <strong>Database ID:</strong><br>
+                                                    <small class="text-muted font-monospace">{{ credential.id or 'N/A' }}</small>
+                                                </div>
+                                                <div class="col-sm-4">
+                                                    <strong>Status:</strong><br>
+                                                    <span class="badge bg-success">{{ credential.status|title }}</span>
+                                                </div>
+                                                <div class="col-sm-4">
+                                                    <strong>Issued:</strong><br>
+                                                    <small class="text-muted">{{ credential.issued_date|datetime if credential.issued_date else 'N/A' }}</small>
+                                                </div>
+                                            </div>
+                                            
+                                            {% if credential.invitation_url %}
+                                            <div class="mt-3">
+                                                <a href="{{ credential.invitation_url }}" class="btn btn-sm btn-outline-primary" target="_blank">
+                                                    <i class="fas fa-external-link-alt me-1"></i>View Original Invitation
+                                                </a>
+                                            </div>
+                                            {% endif %}
                                         </div>
                                     </div>
                                 </div>
@@ -198,4 +381,194 @@
         </div>
     </div>
 </div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+// Enhanced credential expansion functionality
+document.addEventListener('DOMContentLoaded', function() {
+    // Add smooth animation and icon rotation for credential details
+    const collapseButtons = document.querySelectorAll('[data-bs-toggle="collapse"]');
+    
+    collapseButtons.forEach(button => {
+        const target = button.getAttribute('data-bs-target');
+        const collapseElement = document.querySelector(target);
+        const icon = button.querySelector('i');
+        
+        if (collapseElement && icon) {
+            collapseElement.addEventListener('show.bs.collapse', function() {
+                icon.classList.remove('fa-chevron-down');
+                icon.classList.add('fa-chevron-up');
+                button.innerHTML = '<i class="fas fa-chevron-up me-1"></i>Hide VC';
+            });
+            
+            collapseElement.addEventListener('hide.bs.collapse', function() {
+                icon.classList.remove('fa-chevron-up');
+                icon.classList.add('fa-chevron-down');
+                button.innerHTML = '<i class="fas fa-chevron-down me-1"></i>View VC';
+            });
+        }
+    });
+
+    // Handle credential request form submission
+    const credentialForm = document.getElementById('credentialRequestForm');
+    if (credentialForm) {
+        credentialForm.addEventListener('submit', function(e) {
+            e.preventDefault();
+            submitCredentialRequest();
+        });
+    }
+
+    // Color-code expiring credentials
+    document.querySelectorAll('.expiry-date').forEach(function(element) {
+        const expiryDate = new Date(element.getAttribute('data-expiry'));
+        const now = new Date();
+        const daysUntilExpiry = Math.ceil((expiryDate - now) / (1000 * 60 * 60 * 24));
+        
+        if (daysUntilExpiry <= 7) {
+            element.classList.add('text-danger');
+            element.innerHTML = '<i class="fas fa-exclamation-triangle me-1"></i>' + element.textContent + ' (Expires soon!)';
+        } else if (daysUntilExpiry <= 30) {
+            element.classList.add('text-warning');
+            element.innerHTML = '<i class="fas fa-clock me-1"></i>' + element.textContent;
+        }
+    });
+});
+
+// Show credential request form
+function showCredentialRequestForm() {
+    document.getElementById('credential-request-section').style.display = 'block';
+    document.getElementById('credential-request-section').scrollIntoView({ behavior: 'smooth' });
+}
+
+// Hide credential request form
+function hideCredentialRequestForm() {
+    document.getElementById('credential-request-section').style.display = 'none';
+    document.getElementById('credentialRequestForm').reset();
+}
+
+// Submit credential request
+function submitCredentialRequest() {
+    const formData = {
+        credentialType: document.getElementById('credentialType').value,
+        businessJustification: document.getElementById('businessJustification').value,
+        departmentApproval: document.getElementById('departmentApproval').value
+    };
+    
+    if (!formData.credentialType || !formData.businessJustification) {
+        alert('Please fill in all required fields.');
+        return;
+    }
+    
+    // Show loading state
+    const submitBtn = document.querySelector('#credentialRequestForm button[type="submit"]');
+    const originalText = submitBtn.innerHTML;
+    submitBtn.innerHTML = '<i class="fas fa-spinner fa-spin me-2"></i>Submitting...';
+    submitBtn.disabled = true;
+    
+    // Submit to backend (you'll need to implement this endpoint)
+    fetch('/api/credentials/request', {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(formData)
+    })
+    .then(response => response.json())
+    .then(data => {
+        if (data.success) {
+            alert('✅ Credential request submitted successfully! You will be notified when it is processed.');
+            hideCredentialRequestForm();
+            // Optionally refresh the dashboard
+            setTimeout(() => location.reload(), 1000);
+        } else {
+            alert('❌ Error submitting request: ' + (data.error || 'Unknown error'));
+        }
+    })
+    .catch(error => {
+        console.error('Error:', error);
+        alert('❌ Error submitting request. Please try again.');
+    })
+    .finally(() => {
+        // Restore button state
+        submitBtn.innerHTML = originalText;
+        submitBtn.disabled = false;
+    });
+}
+
+// Copy VC JSON to clipboard
+function copyToClipboard(elementId) {
+    const element = document.getElementById(elementId);
+    if (element) {
+        const text = element.textContent;
+        navigator.clipboard.writeText(text).then(function() {
+            // Show success message
+            const button = event.target.closest('button');
+            const originalHTML = button.innerHTML;
+            button.innerHTML = '<i class="fas fa-check me-1"></i>Copied!';
+            button.classList.add('btn-success');
+            button.classList.remove('btn-outline-secondary');
+            
+            setTimeout(() => {
+                button.innerHTML = originalHTML;
+                button.classList.remove('btn-success');
+                button.classList.add('btn-outline-secondary');
+            }, 2000);
+        }, function(err) {
+            console.error('Could not copy text: ', err);
+            alert('Failed to copy to clipboard');
+        });
+    }
+}
+
+// Pretty print and reformat VC JSON
+function prettyPrintVC(elementId) {
+    const element = document.getElementById(elementId);
+    if (element) {
+        try {
+            const jsonText = element.textContent;
+            const jsonObj = JSON.parse(jsonText);
+            const prettyJson = JSON.stringify(jsonObj, null, 2);
+            element.textContent = prettyJson;
+            
+            // Update button to show success
+            const button = event.target.closest('button');
+            const originalHTML = button.innerHTML;
+            button.innerHTML = '<i class="fas fa-check me-1"></i>Formatted!';
+            button.classList.add('btn-success');
+            button.classList.remove('btn-outline-info');
+            
+            setTimeout(() => {
+                button.innerHTML = originalHTML;
+                button.classList.remove('btn-success');
+                button.classList.add('btn-outline-info');
+            }, 2000);
+        } catch (e) {
+            console.error('Error formatting JSON:', e);
+            alert('Error formatting JSON: ' + e.message);
+        }
+    }
+}
+</script>
+
+<style>
+.vc-json {
+    font-family: 'Courier New', monospace;
+    white-space: pre-wrap;
+    word-wrap: break-word;
+    border: 1px solid #dee2e6;
+    font-size: 0.85em !important;
+}
+
+.vc-container {
+    border: 2px solid #e3f2fd;
+    border-radius: 8px;
+    padding: 15px;
+    background-color: #fafafa;
+}
+
+.card.border-left-primary {
+    border-left: 4px solid #007bff;
+}
+</style>
 {% endblock %}

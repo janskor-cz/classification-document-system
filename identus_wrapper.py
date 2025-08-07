@@ -283,6 +283,98 @@ class IdentusDashboardClient:
             print(f"⚠️ Could not get credential records: {e}")
             return {'contents': []}
     
+    def get_credential_record(self, record_id: str) -> Dict:
+        """Get a specific credential record and its VC by record ID"""
+        try:
+            return self._make_request(self.issuer_url, 'GET', f'/issue-credentials/records/{record_id}')
+        except Exception as e:
+            print(f"⚠️ Could not get credential record {record_id}: {e}")
+            return {}
+            
+    def get_verifiable_credential(self, record_id: str) -> Dict:
+        """Get the actual Verifiable Credential JSON from a record ID"""
+        try:
+            record = self.get_credential_record(record_id)
+            if record and 'issuedCredentialRaw' in record:
+                # Return the actual VC JSON
+                return record['issuedCredentialRaw']
+            elif record and 'claims' in record:
+                # Fallback to structured claims if VC not available
+                return {
+                    "type": ["VerifiableCredential", "DataLabelerCredential"],
+                    "issuer": record.get('subjectId', 'Unknown'),
+                    "issuanceDate": record.get('createdAt', 'Unknown'),
+                    "credentialSubject": record.get('claims', {}),
+                    "recordId": record_id,
+                    "protocolState": record.get('protocolState', 'Unknown'),
+                    "_note": "This is a reconstructed VC from Identus record data"
+                }
+            else:
+                # No real credential found, return None to trigger fallback
+                return None
+        except Exception as e:
+            print(f"⚠️ Could not get VC for record {record_id}: {e}")
+            return None
+
+    def create_mock_vc_from_database(self, credential_data: Dict) -> Dict:
+        """Create a mock VC structure from database credential data"""
+        from datetime import datetime, timedelta
+        import random
+        
+        # Extract data from the database record
+        credential_type = credential_data.get('type', 'unknown')
+        classification_level = credential_data.get('classification_level')
+        issued_date = credential_data.get('issued_date', datetime.now())
+        record_id = credential_data.get('identus_record_id', 'unknown')
+        
+        # Create realistic expiration dates for demo purposes
+        expires_at = credential_data.get('expires_at')
+        if not expires_at and credential_type != 'basic_enterprise':
+            # Generate demo expiration dates
+            days_to_expiry = random.choice([5, 15, 45, 90])  # Some soon, some later
+            expires_at = datetime.now() + timedelta(days=days_to_expiry)
+        
+        # Create a W3C VC compliant structure
+        mock_vc = {
+            "@context": [
+                "https://www.w3.org/2018/credentials/v1",
+                "https://hyperledger.github.io/anoncreds-spec/contexts/anoncreds/v1.json"
+            ],
+            "type": ["VerifiableCredential", "DataLabelerCredential"],
+            "issuer": {
+                "id": "did:prism:development-mode-did",
+                "name": "Classification Document System"
+            },
+            "issuanceDate": issued_date.isoformat() if hasattr(issued_date, 'isoformat') else str(issued_date),
+            "expirationDate": expires_at.isoformat() if expires_at and hasattr(expires_at, 'isoformat') else None,
+            "credentialSubject": {
+                "id": f"did:prism:user-{credential_data.get('id', 'unknown')}",
+                "credentialType": credential_type,
+                "credentialCategory": credential_data.get('category', 'unknown'),
+                "classificationLevel": classification_level,
+                "enterpriseAccount": "DEFAULT_ENTERPRISE",
+                "email": "user@company.com",
+                "fullName": "Sample User",
+                "issuedAt": issued_date.isoformat() if hasattr(issued_date, 'isoformat') else str(issued_date),
+                "status": credential_data.get('status', 'issued')
+            },
+            "proof": {
+                "type": "Ed25519Signature2020",
+                "created": issued_date.isoformat() if hasattr(issued_date, 'isoformat') else str(issued_date),
+                "proofPurpose": "assertionMethod",
+                "verificationMethod": "did:prism:development-mode-did#key-1",
+                "proofValue": "mock-signature-for-demo-purposes-only"
+            },
+            "_metadata": {
+                "recordId": record_id,
+                "databaseId": credential_data.get('id'),
+                "source": "mock_from_database",
+                "note": "This is a mock VC created from database data for demonstration purposes"
+            }
+        }
+        
+        return mock_vc
+    
     def get_dids(self) -> Dict:
         """Get all DIDs from Identus"""
         try:
