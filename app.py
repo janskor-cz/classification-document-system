@@ -22,6 +22,7 @@ from psycopg2.extras import RealDictCursor
 # Import our configuration and Identus integration
 from config import get_config, get_flask_config
 from identus_wrapper import identus_client
+from document_encryption import ephemeral_encryption, encrypt_document_for_ephemeral_session
 
 # Initialize Flask app
 app = Flask(__name__, 
@@ -1691,6 +1692,466 @@ def internal_error(error):
     if request.path.startswith('/api/'):
         return jsonify({'error': 'Internal server error'}), 500
     return render_template('500.html'), 500
+
+# ==================== EPHEMERAL DID API ROUTES (Working Package 3) ====================
+
+@app.route('/api/ephemeral/generate-session', methods=['POST'])
+def create_ephemeral_access_session():
+    """Create ephemeral access session for document"""
+    try:
+        if not current_user.get('authenticated'):
+            return jsonify({'error': 'Authentication required'}), 401
+        
+        data = request.get_json()
+        if not data:
+            return jsonify({'error': 'Invalid JSON data'}), 400
+        
+        # Extract request data
+        document_id = data.get('documentId')
+        ephemeral_did = data.get('ephemeralDID')
+        ephemeral_public_key = data.get('ephemeralPublicKey')
+        business_justification = data.get('businessJustification', '').strip()
+        session_duration_minutes = data.get('sessionDurationMinutes', 60)
+        
+        # Validate required fields
+        if not all([document_id, ephemeral_did, ephemeral_public_key]):
+            return jsonify({'error': 'Missing required fields: documentId, ephemeralDID, ephemeralPublicKey'}), 400
+        
+        if not business_justification:
+            return jsonify({'error': 'Business justification is required'}), 400
+        
+        # Validate DID format
+        if not ephemeral_encryption.validate_ephemeral_did_format(ephemeral_did):
+            return jsonify({'error': 'Invalid ephemeral DID format'}), 400
+        
+        # Get document and verify user can access it
+        conn = get_db_connection()
+        cursor = conn.cursor(cursor_factory=RealDictCursor)
+        
+        cursor.execute("""
+            SELECT d.*, u.full_name as created_by_name
+            FROM documents d
+            LEFT JOIN users u ON d.created_by_user_id = u.id
+            WHERE d.id = %s
+        """, (document_id,))
+        
+        document = cursor.fetchone()
+        if not document:
+            cursor.close()
+            conn.close()
+            return jsonify({'error': 'Document not found'}), 404
+        
+        # Verify user has classification credentials for this document
+        classification_level = document['classification_level']
+        user_identity_hash = current_user['identity_hash']
+        
+        # Check if user has exact matching classification level
+        cursor.execute("""
+            SELECT can_user_access_level(%s, %s) as can_access
+        """, (user_identity_hash, classification_level))
+        
+        access_check = cursor.fetchone()
+        if not access_check['can_access']:
+            cursor.close()
+            conn.close()
+            return jsonify({'error': f'Insufficient classification credentials for level {classification_level}'}), 403
+        
+        # Check for DID reuse
+        cursor.execute("""
+            SELECT check_ephemeral_did_reuse(%s, 24) as is_reused
+        """, (ephemeral_did,))
+        
+        reuse_check = cursor.fetchone()
+        if reuse_check['is_reused']:
+            cursor.close()
+            conn.close()
+            return jsonify({'error': 'Ephemeral DID has been used recently. Please generate a new one.'}), 400
+        
+        # Generate session token
+        session_token = secrets.token_urlsafe(32)
+        expires_at = datetime.utcnow() + timedelta(minutes=session_duration_minutes)
+        
+        # Create access session
+        cursor.execute("""
+            INSERT INTO document_access_sessions (
+                user_id, user_identity_hash, enterprise_account_name, document_id,
+                ephemeral_did, ephemeral_public_key, session_token, classification_level,
+                classification_verified, expires_at
+            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            RETURNING id
+        """, (
+            current_user['user_id'],
+            user_identity_hash,
+            current_user['enterprise_account_name'],
+            document_id,
+            ephemeral_did,
+            json.dumps(ephemeral_public_key),
+            session_token,
+            classification_level,
+            True,
+            expires_at
+        ))
+        
+        session_id = cursor.fetchone()['id']
+        
+        # Log session creation
+        cursor.execute("""
+            INSERT INTO ephemeral_did_audit_log (
+                user_id, user_identity_hash, enterprise_account_name, document_id,
+                ephemeral_did, action, classification_level, session_token, success
+            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+        """, (
+            current_user['user_id'],
+            user_identity_hash,
+            current_user['enterprise_account_name'],
+            document_id,
+            ephemeral_did,
+            'access_requested',
+            classification_level,
+            session_token,
+            True
+        ))
+        
+        conn.commit()
+        cursor.close()
+        conn.close()
+        
+        print(f"✅ Created ephemeral access session {session_id} for user {current_user['full_name']}")
+        
+        return jsonify({
+            'success': True,
+            'sessionToken': session_token,
+            'sessionId': session_id,
+            'ephemeralDID': ephemeral_did,
+            'expiresAt': expires_at.isoformat(),
+            'classificationLevel': classification_level,
+            'message': 'Ephemeral access session created successfully'
+        })
+        
+    except Exception as e:
+        print(f"❌ Failed to create ephemeral session: {e}")
+        return jsonify({'error': 'Failed to create ephemeral access session'}), 500
+
+@app.route('/api/ephemeral/encrypt-document/<session_token>', methods=['GET'])
+def get_encrypted_document_ephemeral(session_token):
+    """Get document encrypted with ephemeral public key"""
+    try:
+        if not current_user.get('authenticated'):
+            return jsonify({'error': 'Authentication required'}), 401
+        
+        # Validate and get session
+        conn = get_db_connection()
+        cursor = conn.cursor(cursor_factory=RealDictCursor)
+        
+        cursor.execute("""
+            SELECT das.*, d.filename, d.file_path, d.size as file_size,
+                   d.content_type, d.classification_level
+            FROM document_access_sessions das
+            JOIN documents d ON das.document_id = d.id
+            WHERE das.session_token = %s 
+            AND das.user_identity_hash = %s
+            AND das.expires_at > NOW()
+            AND das.completed_at IS NULL
+        """, (session_token, current_user['identity_hash']))
+        
+        session = cursor.fetchone()
+        if not session:
+            cursor.close()
+            conn.close()
+            return jsonify({'error': 'Invalid or expired session token'}), 404
+        
+        # Check if document already encrypted for this session
+        existing_encrypted = ephemeral_encryption.get_session_encrypted_file(session['id'])
+        
+        if existing_encrypted:
+            print(f"📄 Using existing encrypted document for session {session['id']}")
+            encrypted_data = ephemeral_encryption._read_encrypted_file(existing_encrypted)
+        else:
+            # Read and encrypt document
+            document_path = session['file_path']
+            if not os.path.exists(document_path):
+                cursor.close()
+                conn.close()
+                return jsonify({'error': 'Document file not found'}), 404
+            
+            with open(document_path, 'rb') as f:
+                document_data = f.read()
+            
+            print(f"🔒 Encrypting document for ephemeral session {session['id']}")
+            
+            # Encrypt document with ephemeral public key
+            encryption_result = encrypt_document_for_ephemeral_session(
+                document_data,
+                session['ephemeral_did'],
+                session['id']
+            )
+            
+            # Store encryption metadata
+            cursor.execute("""
+                INSERT INTO document_ephemeral_encryption (
+                    document_id, access_session_id, ephemeral_did,
+                    encrypted_document_path, encryption_algorithm
+                ) VALUES (%s, %s, %s, %s, %s)
+            """, (
+                session['document_id'],
+                session['id'],
+                session['ephemeral_did'],
+                encryption_result['encrypted_file_path'],
+                encryption_result['encryption_algorithm']
+            ))
+            
+            # Update session status
+            cursor.execute("""
+                UPDATE document_access_sessions 
+                SET document_encrypted_with_ephemeral_key = true, 
+                    access_granted = true, 
+                    accessed_at = NOW()
+                WHERE id = %s
+            """, (session['id'],))
+            
+            # Log encryption success
+            cursor.execute("""
+                INSERT INTO ephemeral_did_audit_log (
+                    user_id, user_identity_hash, enterprise_account_name, document_id,
+                    ephemeral_did, action, classification_level, session_token, success
+                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+            """, (
+                session['user_id'],
+                session['user_identity_hash'],
+                session['enterprise_account_name'],
+                session['document_id'],
+                session['ephemeral_did'],
+                'document_encrypted',
+                session['classification_level'],
+                session_token,
+                True
+            ))
+            
+            conn.commit()
+            
+            # Read the encrypted data
+            encrypted_data = ephemeral_encryption._read_encrypted_file(encryption_result['encrypted_file_path'])
+        
+        cursor.close()
+        conn.close()
+        
+        # Prepare response for client-side decryption
+        response = {
+            'success': True,
+            'encryptedDocument': encrypted_data['encrypted_document'],
+            'encryptedKey': encrypted_data['encrypted_key'],
+            'iv': encrypted_data['iv'],
+            'authTag': encrypted_data['auth_tag'],
+            'algorithm': encrypted_data['algorithm'],
+            'sessionInfo': {
+                'sessionToken': session_token,
+                'ephemeralDID': session['ephemeral_did'],
+                'expiresAt': encrypted_data['expires_at'],
+                'documentInfo': {
+                    'filename': session['filename'],
+                    'contentType': session['content_type'],
+                    'size': session['file_size']
+                }
+            },
+            'instructions': 'Use your ephemeral private key to decrypt this document in your browser',
+            'security': {
+                'perfectForwardSecrecy': True,
+                'clientSideDecryption': True,
+                'serverKeyExposure': False
+            }
+        }
+        
+        print(f"✅ Served encrypted document for ephemeral session {session['id']}")
+        return jsonify(response)
+        
+    except Exception as e:
+        print(f"❌ Failed to get encrypted document: {e}")
+        return jsonify({'error': 'Failed to retrieve encrypted document'}), 500
+
+@app.route('/api/ephemeral/session-status/<session_token>', methods=['GET'])
+def get_ephemeral_session_status(session_token):
+    """Get status of ephemeral access session"""
+    try:
+        if not current_user.get('authenticated'):
+            return jsonify({'error': 'Authentication required'}), 401
+        
+        conn = get_db_connection()
+        cursor = conn.cursor(cursor_factory=RealDictCursor)
+        
+        cursor.execute("""
+            SELECT das.*, d.filename, d.classification_level,
+                   EXTRACT(EPOCH FROM (das.expires_at - NOW())) as seconds_remaining
+            FROM document_access_sessions das
+            JOIN documents d ON das.document_id = d.id
+            WHERE das.session_token = %s 
+            AND das.user_identity_hash = %s
+        """, (session_token, current_user['identity_hash']))
+        
+        session = cursor.fetchone()
+        cursor.close()
+        conn.close()
+        
+        if not session:
+            return jsonify({'error': 'Session not found'}), 404
+        
+        # Determine session status
+        if session['completed_at']:
+            status = 'completed'
+        elif session['seconds_remaining'] <= 0:
+            status = 'expired'
+        elif session['access_granted']:
+            status = 'active'
+        elif session['classification_verified']:
+            status = 'authorized'
+        else:
+            status = 'pending'
+        
+        return jsonify({
+            'success': True,
+            'sessionToken': session_token,
+            'status': status,
+            'ephemeralDID': session['ephemeral_did'],
+            'documentId': session['document_id'],
+            'documentFilename': session['filename'],
+            'classificationLevel': session['classification_level'],
+            'expiresAt': session['expires_at'].isoformat(),
+            'secondsRemaining': max(0, int(session['seconds_remaining'] or 0)),
+            'accessGranted': session['access_granted'],
+            'documentEncrypted': session['document_encrypted_with_ephemeral_key'],
+            'createdAt': session['created_at'].isoformat(),
+            'accessedAt': session['accessed_at'].isoformat() if session['accessed_at'] else None,
+            'completedAt': session['completed_at'].isoformat() if session['completed_at'] else None
+        })
+        
+    except Exception as e:
+        print(f"❌ Failed to get session status: {e}")
+        return jsonify({'error': 'Failed to retrieve session status'}), 500
+
+@app.route('/api/ephemeral/cleanup-expired', methods=['POST'])
+def cleanup_expired_ephemeral_sessions():
+    """Admin endpoint to cleanup expired ephemeral sessions"""
+    try:
+        # Check admin privileges (basic check)
+        if not current_user.get('authenticated'):
+            return jsonify({'error': 'Authentication required'}), 401
+        
+        # For now, allow any authenticated user to trigger cleanup
+        # In production, add proper admin role checking
+        
+        # Cleanup expired sessions in database
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        
+        # Get expired sessions before cleanup
+        cursor.execute("""
+            SELECT id FROM document_access_sessions 
+            WHERE expires_at < NOW() AND completed_at IS NULL
+        """)
+        
+        expired_session_ids = [row[0] for row in cursor.fetchall()]
+        
+        # Mark expired sessions as completed
+        cleanup_count = ephemeral_encryption.cleanup_expired_files()
+        
+        # Update database
+        cursor.execute("""
+            UPDATE document_access_sessions 
+            SET completed_at = NOW()
+            WHERE expires_at < NOW() AND completed_at IS NULL
+        """)
+        
+        db_cleanup_count = cursor.rowcount
+        
+        # Log cleanup operation
+        cursor.execute("""
+            INSERT INTO ephemeral_did_audit_log (
+                action, success, error_details, created_at
+            ) VALUES (%s, %s, %s, %s)
+        """, (
+            'session_cleanup',
+            True,
+            f'Cleaned up {cleanup_count} encrypted files and {db_cleanup_count} database sessions',
+            datetime.utcnow()
+        ))
+        
+        conn.commit()
+        cursor.close()
+        conn.close()
+        
+        print(f"✅ Cleanup complete: {cleanup_count} files, {db_cleanup_count} DB sessions")
+        
+        return jsonify({
+            'success': True,
+            'message': 'Expired ephemeral sessions cleaned up successfully',
+            'filesCleanedUp': cleanup_count,
+            'sessionsCleanedUp': db_cleanup_count,
+            'expiredSessionIds': expired_session_ids
+        })
+        
+    except Exception as e:
+        print(f"❌ Failed to cleanup expired sessions: {e}")
+        return jsonify({'error': 'Failed to cleanup expired sessions'}), 500
+
+@app.route('/documents/request-ephemeral-access/<int:doc_id>', methods=['GET'])
+def request_ephemeral_document_access_page(doc_id):
+    """Show ephemeral document access request page"""
+    try:
+        if not current_user.get('authenticated'):
+            flash('Please log in to access documents.', 'error')
+            return redirect(url_for('login'))
+        
+        # Get document information
+        conn = get_db_connection()
+        cursor = conn.cursor(cursor_factory=RealDictCursor)
+        
+        cursor.execute("""
+            SELECT d.*, u.full_name as created_by_name,
+                   CASE 
+                       WHEN d.classification_level = 1 THEN 'Public'
+                       WHEN d.classification_level = 2 THEN 'Internal'
+                       WHEN d.classification_level = 3 THEN 'Confidential'
+                       ELSE 'Unknown'
+                   END as classification_level_name
+            FROM documents d
+            LEFT JOIN users u ON d.created_by_user_id = u.id
+            WHERE d.id = %s
+        """, (doc_id,))
+        
+        document = cursor.fetchone()
+        cursor.close()
+        conn.close()
+        
+        if not document:
+            flash('Document not found.', 'error')
+            return redirect(url_for('dashboard'))
+        
+        # Check if user has classification credentials
+        classification_level = document['classification_level']
+        user_identity_hash = current_user['identity_hash']
+        
+        conn = get_db_connection()
+        cursor = conn.cursor(cursor_factory=RealDictCursor)
+        
+        cursor.execute("""
+            SELECT can_user_access_level(%s, %s) as can_access
+        """, (user_identity_hash, classification_level))
+        
+        access_check = cursor.fetchone()
+        cursor.close()
+        conn.close()
+        
+        if not access_check['can_access']:
+            flash(f'You do not have the required classification credentials (Level {classification_level}) to access this document.', 'error')
+            return redirect(url_for('dashboard'))
+        
+        return render_template('documents/access-with-ephemeral.html', 
+                             document=document,
+                             current_user=current_user)
+        
+    except Exception as e:
+        print(f"❌ Failed to load ephemeral access page: {e}")
+        flash('Failed to load document access page.', 'error')
+        return redirect(url_for('dashboard'))
 
 # ==================== TEMPLATE FILTERS ====================
 

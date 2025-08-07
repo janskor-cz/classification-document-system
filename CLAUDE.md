@@ -22,6 +22,15 @@ This is the **Classification Document System** - a comprehensive Flask-based web
 python app.py
 ```
 
+**Docker Compose Method**:
+```bash
+# Start all services using Docker Compose (agents on different ports than scripts)
+docker-compose up -d
+
+# Start Flask application (connects to agents on ports 8000, 7000, 9000)
+python app.py
+```
+
 **Alternative Method (Database Only)**:
 ```bash
 # Start supporting services only  
@@ -294,9 +303,9 @@ Copy `.env.example` to `.env` and configure:
 - `FLASK_ENV` - Environment mode (development/testing/production)
 - `DATABASE_URL` - Database connection string (defaults to SQLite for dev, PostgreSQL for production)
 - `SECRET_KEY` / `JWT_SECRET_KEY` - Security keys for sessions/tokens (auto-generated if not provided)
-- `IDENTUS_ISSUER_URL` - Identus issuer agent endpoint (http://localhost:8080/cloud-agent)
-- `IDENTUS_HOLDER_URL` - Holder agent endpoint (http://localhost:7000/cloud-agent)
-- `IDENTUS_VERIFIER_URL` - Verifier agent endpoint (http://localhost:9000/cloud-agent)
+- `IDENTUS_ISSUER_URL` - Identus issuer agent endpoint (http://localhost:8080/cloud-agent for scripts, http://localhost:8000/cloud-agent for Docker Compose)
+- `IDENTUS_HOLDER_URL` - Holder agent endpoint (http://localhost:7000/cloud-agent for both)
+- `IDENTUS_VERIFIER_URL` - Verifier agent endpoint (http://localhost:9000/cloud-agent for both)
 - `UPLOAD_FOLDER` - Document storage location (defaults to 'uploads')
 - `MAX_FILE_SIZE` - Maximum document upload size (defaults to 100MB)
 - `CODESPACES` - Auto-detected in GitHub Codespaces for environment configuration
@@ -309,6 +318,26 @@ The system supports three document classification levels:
 - `public` (level 1) - Public access
 - `internal` (level 2) - Internal company use
 - `confidential` (level 3) - Restricted access
+
+### Setup Methods Comparison
+
+The project provides two ways to start Identus agents:
+
+**1. Shell Scripts Method** (`./scripts/setup-agents.sh`):
+- **Ports**: Issuer (8080), Holder (7000), Verifier (9000)
+- **Networking**: Uses host networking
+- **Features**: Individual Vault containers, auto-population of databases
+- **Management**: Built-in status and cleanup commands
+- **Recommended for**: Development and testing
+
+**2. Docker Compose Method** (`docker-compose up -d`):
+- **Ports**: Issuer (8000), Holder (7000), Verifier (9000)
+- **Networking**: Uses bridge network
+- **Features**: Integrated with postgres/redis services
+- **Management**: Standard Docker Compose commands
+- **Recommended for**: Quick starts and container orchestration
+
+**Note**: The `.env.example` file shows port 8000 for issuer URL, which matches Docker Compose. Update your `.env` file accordingly based on which method you use.
 
 ## Development Workflows
 
@@ -396,15 +425,26 @@ sudo docker stop identus-postgres  # Stop database when done
 
 ### Testing and Code Quality
 
-**Note**: No formal testing framework is currently configured. For testing:
+**Testing**:
+- No formal testing framework is currently configured (pytest could be added)
 - Manual testing via Flask development server
-- Use health check endpoints for integration testing
-- Test Identus integration via status endpoints
+- Use health check endpoints for integration testing:
+  - Flask app: `curl http://localhost:5000/health`
+  - Identus agents: `curl http://localhost:8080/_system/health`
+- Test Identus integration via `/api/identus/status` endpoint
 
 **Code Quality**:
 - No linting tools configured (consider adding flake8, black, or pylint)
 - Follow PEP 8 conventions manually
 - Use type hints where appropriate (some files already use typing module)
+- Dependencies managed via `requirements.txt` with pinned versions
+
+**Key Dependencies**:
+- **Flask 2.3.3** - Web framework
+- **SQLAlchemy 2.0.21** - Database ORM (although raw SQL is used currently)
+- **psycopg2-binary 2.9.9** - PostgreSQL adapter
+- **bcrypt 4.0.1** - Password hashing
+- **cryptography 41.0.4** - Encryption operations
 
 ### Debugging Identus Issues
 
@@ -425,14 +465,14 @@ curl http://localhost:8080/_system/health
 - Restart agent: `./scripts/setup-issuer-only.sh`
 
 **Known Issues & Solutions**:
-- **Port conflicts**: Ensure ports 8080, 8090, 8200, 5432 are free
-- **Slow startup**: Agent can take 30-60 seconds to be ready
-- **Host networking**: Required - custom Docker networks don't work
-- **Multiple databases**: Agent requires `pollux`, `connect`, `agent`, `node_db` databases
-- **Vault required**: Agent needs Vault for secrets management
+- **Port conflicts**: Ensure required ports are free (8080/8000, 7000, 9000, 5432 for scripts/Docker Compose respectively)
+- **Slow startup**: Agent can take 30-60 seconds to be ready after container start
+- **Host networking**: Scripts method requires host networking - bridge networks can cause connectivity issues
+- **Multiple databases**: Agents require `pollux`, `connect`, `agent`, `node_db` databases plus agent-specific ones
+- **Vault required**: Scripts method needs individual Vault containers for secure key management
 - **GitHub Codespaces**: System auto-detects Codespaces environment and configures accordingly
-- **Configuration URLs**: Use port 8080 for agent HTTP, port 8090 for DIDComm
-- **Database connection**: Flask app can run without Identus; only credential operations require working agent
+- **Configuration URLs**: Scripts use port 8080 for issuer HTTP, Docker Compose uses 8000
+- **Database connection**: Flask app can run without Identus; only credential operations require working agents
 
 ## Security Considerations
 

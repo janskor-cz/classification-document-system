@@ -397,30 +397,240 @@ INSERT INTO issued_credentials (
 ON CONFLICT DO NOTHING;
 
 -- =====================================================================================
+-- WORKING PACKAGE 3: EPHEMERAL DID-BASED DOCUMENT ENCRYPTION
+-- =====================================================================================
+
+-- Track ephemeral DIDs for document access sessions
+CREATE TABLE IF NOT EXISTS document_access_sessions (
+    id SERIAL PRIMARY KEY,
+    user_id INTEGER REFERENCES users(id),
+    user_identity_hash VARCHAR(64) NOT NULL,
+    enterprise_account_name VARCHAR(100) NOT NULL,
+    document_id INTEGER REFERENCES documents(id),
+    ephemeral_did VARCHAR(500) NOT NULL, -- User-generated ephemeral DID:key
+    ephemeral_public_key JSONB NOT NULL, -- Public key for encryption (JWK format)
+    session_token VARCHAR(64) NOT NULL UNIQUE,
+    classification_level INTEGER NOT NULL,
+    classification_verified BOOLEAN DEFAULT false,
+    document_encrypted_with_ephemeral_key BOOLEAN DEFAULT false,
+    access_granted BOOLEAN DEFAULT false,
+    expires_at TIMESTAMP NOT NULL, -- Short expiration (e.g., 1 hour)
+    accessed_at TIMESTAMP,
+    completed_at TIMESTAMP,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (enterprise_account_name) REFERENCES enterprise_accounts(account_name)
+);
+
+-- Enhanced documents table with ephemeral encryption support
+ALTER TABLE documents ADD COLUMN IF NOT EXISTS encrypted_with_ephemeral_did BOOLEAN DEFAULT false;
+ALTER TABLE documents ADD COLUMN IF NOT EXISTS original_encryption_method VARCHAR(50) DEFAULT 'classification'; -- 'classification', 'ephemeral'
+
+-- Document encryption metadata for ephemeral access
+CREATE TABLE IF NOT EXISTS document_ephemeral_encryption (
+    id SERIAL PRIMARY KEY,
+    document_id INTEGER REFERENCES documents(id),
+    access_session_id INTEGER REFERENCES document_access_sessions(id),
+    ephemeral_did VARCHAR(500) NOT NULL,
+    encrypted_document_path VARCHAR(500) NOT NULL,
+    encryption_algorithm VARCHAR(50) DEFAULT 'ECIES-P256', -- Elliptic Curve encryption
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    accessed_at TIMESTAMP,
+    expired_at TIMESTAMP
+);
+
+-- Audit log for ephemeral DID document access
+CREATE TABLE IF NOT EXISTS ephemeral_did_audit_log (
+    id SERIAL PRIMARY KEY,
+    user_id INTEGER REFERENCES users(id),
+    user_identity_hash VARCHAR(64),
+    enterprise_account_name VARCHAR(100),
+    document_id INTEGER REFERENCES documents(id),
+    ephemeral_did VARCHAR(500),
+    action VARCHAR(100) NOT NULL, -- 'did_generated', 'access_requested', 'document_encrypted', 'document_decrypted', 'session_expired'
+    classification_level INTEGER,
+    session_token VARCHAR(64),
+    success BOOLEAN DEFAULT true,
+    error_details TEXT,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (enterprise_account_name) REFERENCES enterprise_accounts(account_name)
+);
+
+-- =====================================================================================
+-- EPHEMERAL DID PERFORMANCE INDEXES
+-- =====================================================================================
+
+-- Indexes for ephemeral access sessions
+CREATE INDEX IF NOT EXISTS idx_access_sessions_user_id ON document_access_sessions(user_id);
+CREATE INDEX IF NOT EXISTS idx_access_sessions_document_id ON document_access_sessions(document_id);
+CREATE INDEX IF NOT EXISTS idx_access_sessions_ephemeral_did ON document_access_sessions(ephemeral_did);
+CREATE INDEX IF NOT EXISTS idx_access_sessions_session_token ON document_access_sessions(session_token);
+CREATE INDEX IF NOT EXISTS idx_access_sessions_expires_at ON document_access_sessions(expires_at);
+CREATE INDEX IF NOT EXISTS idx_access_sessions_user_identity ON document_access_sessions(user_identity_hash);
+CREATE INDEX IF NOT EXISTS idx_access_sessions_enterprise ON document_access_sessions(enterprise_account_name);
+
+-- Indexes for ephemeral encryption
+CREATE INDEX IF NOT EXISTS idx_ephemeral_encryption_document_id ON document_ephemeral_encryption(document_id);
+CREATE INDEX IF NOT EXISTS idx_ephemeral_encryption_session_id ON document_ephemeral_encryption(access_session_id);
+CREATE INDEX IF NOT EXISTS idx_ephemeral_encryption_did ON document_ephemeral_encryption(ephemeral_did);
+CREATE INDEX IF NOT EXISTS idx_ephemeral_encryption_expired_at ON document_ephemeral_encryption(expired_at);
+
+-- Indexes for ephemeral audit log
+CREATE INDEX IF NOT EXISTS idx_ephemeral_audit_user_id ON ephemeral_did_audit_log(user_id);
+CREATE INDEX IF NOT EXISTS idx_ephemeral_audit_document_id ON ephemeral_did_audit_log(document_id);
+CREATE INDEX IF NOT EXISTS idx_ephemeral_audit_action ON ephemeral_did_audit_log(action);
+CREATE INDEX IF NOT EXISTS idx_ephemeral_audit_session_token ON ephemeral_did_audit_log(session_token);
+CREATE INDEX IF NOT EXISTS idx_ephemeral_audit_time ON ephemeral_did_audit_log(created_at);
+CREATE INDEX IF NOT EXISTS idx_ephemeral_audit_user_identity ON ephemeral_did_audit_log(user_identity_hash);
+
+-- =====================================================================================
+-- EPHEMERAL DID HELPER FUNCTIONS
+-- =====================================================================================
+
+-- Function to validate ephemeral DID format
+CREATE OR REPLACE FUNCTION validate_ephemeral_did_format(ephemeral_did VARCHAR(500))
+RETURNS BOOLEAN AS $$
+BEGIN
+    -- Check if DID follows did:key format
+    RETURN ephemeral_did ~ '^did:key:z[A-Za-z0-9]+$';
+END;
+$$ LANGUAGE plpgsql;
+
+-- Function to check for ephemeral DID reuse
+CREATE OR REPLACE FUNCTION check_ephemeral_did_reuse(ephemeral_did VARCHAR(500), hours_window INTEGER DEFAULT 24)
+RETURNS BOOLEAN AS $$
+DECLARE
+    reuse_count INTEGER;
+BEGIN
+    SELECT COUNT(*)
+    INTO reuse_count
+    FROM document_access_sessions 
+    WHERE ephemeral_did = ephemeral_did 
+    AND created_at > NOW() - (hours_window || ' hours')::INTERVAL;
+    
+    RETURN reuse_count > 0;
+END;
+$$ LANGUAGE plpgsql;
+
+-- Function to cleanup expired ephemeral sessions
+CREATE OR REPLACE FUNCTION cleanup_expired_ephemeral_sessions()
+RETURNS INTEGER AS $$
+DECLARE
+    expired_count INTEGER;
+BEGIN
+    -- Count expired sessions first
+    SELECT COUNT(*)
+    INTO expired_count
+    FROM document_access_sessions 
+    WHERE expires_at < NOW() AND completed_at IS NULL;
+    
+    -- Mark expired sessions as completed
+    UPDATE document_access_sessions 
+    SET completed_at = NOW()
+    WHERE expires_at < NOW() AND completed_at IS NULL;
+    
+    -- Log cleanup operation
+    INSERT INTO ephemeral_did_audit_log (
+        action, success, error_details, created_at
+    ) VALUES (
+        'session_cleanup', true, 'Cleaned up ' || expired_count || ' expired sessions', NOW()
+    );
+    
+    RETURN expired_count;
+END;
+$$ LANGUAGE plpgsql;
+
+-- Function to get user's active ephemeral sessions
+CREATE OR REPLACE FUNCTION get_user_active_ephemeral_sessions(user_identity_hash VARCHAR(64))
+RETURNS TABLE (
+    session_id INTEGER,
+    document_id INTEGER,
+    ephemeral_did VARCHAR(500),
+    session_token VARCHAR(64),
+    classification_level INTEGER,
+    expires_at TIMESTAMP,
+    created_at TIMESTAMP
+) AS $$
+BEGIN
+    RETURN QUERY
+    SELECT 
+        das.id,
+        das.document_id,
+        das.ephemeral_did,
+        das.session_token,
+        das.classification_level,
+        das.expires_at,
+        das.created_at
+    FROM document_access_sessions das
+    WHERE das.user_identity_hash = user_identity_hash
+    AND das.expires_at > NOW()
+    AND das.completed_at IS NULL
+    ORDER BY das.created_at DESC;
+END;
+$$ LANGUAGE plpgsql;
+
+-- =====================================================================================
+-- EPHEMERAL DID TRIGGERS
+-- =====================================================================================
+
+-- Trigger to validate ephemeral DID format on insert/update
+CREATE OR REPLACE FUNCTION validate_ephemeral_did_trigger()
+RETURNS TRIGGER AS $$
+BEGIN
+    IF NOT validate_ephemeral_did_format(NEW.ephemeral_did) THEN
+        RAISE EXCEPTION 'Invalid ephemeral DID format: %', NEW.ephemeral_did;
+    END IF;
+    
+    -- Log DID generation
+    INSERT INTO ephemeral_did_audit_log (
+        user_id, user_identity_hash, enterprise_account_name, document_id,
+        ephemeral_did, action, classification_level, session_token, success
+    ) VALUES (
+        NEW.user_id, NEW.user_identity_hash, NEW.enterprise_account_name, NEW.document_id,
+        NEW.ephemeral_did, 'did_generated', NEW.classification_level, NEW.session_token, true
+    );
+    
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE TRIGGER validate_ephemeral_did_on_insert 
+    BEFORE INSERT ON document_access_sessions
+    FOR EACH ROW EXECUTE FUNCTION validate_ephemeral_did_trigger();
+
+-- =====================================================================================
 -- COMPLETION MESSAGE
 -- =====================================================================================
 
 DO $$
 BEGIN
     RAISE NOTICE '=================================================================================';
-    RAISE NOTICE 'Classification Document System Database - Working Package 1 - INITIALIZED!';
+    RAISE NOTICE 'Classification Document System Database - WP1 + WP3 - INITIALIZED!';
     RAISE NOTICE '=================================================================================';
-    RAISE NOTICE 'Enterprise Account System:';
+    RAISE NOTICE 'Enterprise Account System (WP1):';
     RAISE NOTICE '  ✓ Enterprise accounts with corporate control';
     RAISE NOTICE '  ✓ Cryptographic identity generation with enterprise salt';
     RAISE NOTICE '  ✓ Registration Authority recovery capabilities';
     RAISE NOTICE '';
-    RAISE NOTICE 'Two-Stage Credential System:';
+    RAISE NOTICE 'Two-Stage Credential System (WP1):';
     RAISE NOTICE '  ✓ Enterprise credentials (foundation access)';
     RAISE NOTICE '  ✓ Classification credentials (document control)';
     RAISE NOTICE '  ✓ Approval workflow with business justification';
     RAISE NOTICE '';
-    RAISE NOTICE 'Document Classification Control:';
+    RAISE NOTICE 'Document Classification Control (WP1):';
     RAISE NOTICE '  ✓ Classification-based upload restrictions';
     RAISE NOTICE '  ✓ Exact-level access control (no hierarchical access)';
     RAISE NOTICE '  ✓ Comprehensive access logging';
     RAISE NOTICE '';
+    RAISE NOTICE 'Ephemeral DID-Based Document Encryption (WP3):';
+    RAISE NOTICE '  ✓ Ephemeral DID session tracking';
+    RAISE NOTICE '  ✓ Client-side key generation support';
+    RAISE NOTICE '  ✓ Perfect forward secrecy architecture';
+    RAISE NOTICE '  ✓ Session expiration and cleanup';
+    RAISE NOTICE '  ✓ DID format validation and reuse prevention';
+    RAISE NOTICE '  ✓ Comprehensive ephemeral access auditing';
+    RAISE NOTICE '';
     RAISE NOTICE 'Tables Created:';
+    RAISE NOTICE '  WP1 Tables:';
     RAISE NOTICE '  • enterprise_accounts - Corporate control foundation';
     RAISE NOTICE '  • users - Enhanced with cryptographic identity';
     RAISE NOTICE '  • credential_requests - Two-stage request workflow'; 
@@ -431,10 +641,22 @@ BEGIN
     RAISE NOTICE '  • credential_recovery_requests - Enterprise recovery system';
     RAISE NOTICE '  • audit_logs - Comprehensive system auditing';
     RAISE NOTICE '';
+    RAISE NOTICE '  WP3 Tables:';
+    RAISE NOTICE '  • document_access_sessions - Ephemeral DID session tracking';
+    RAISE NOTICE '  • document_ephemeral_encryption - Ephemeral encryption metadata';
+    RAISE NOTICE '  • ephemeral_did_audit_log - Ephemeral access auditing';
+    RAISE NOTICE '';
     RAISE NOTICE 'Helper Functions:';
+    RAISE NOTICE '  WP1 Functions:';
     RAISE NOTICE '  • get_user_max_classification_level()';
     RAISE NOTICE '  • can_user_classify_at_level()';
     RAISE NOTICE '  • can_user_access_level()';
+    RAISE NOTICE '';
+    RAISE NOTICE '  WP3 Functions:';
+    RAISE NOTICE '  • validate_ephemeral_did_format()';
+    RAISE NOTICE '  • check_ephemeral_did_reuse()';
+    RAISE NOTICE '  • cleanup_expired_ephemeral_sessions()';
+    RAISE NOTICE '  • get_user_active_ephemeral_sessions()';
     RAISE NOTICE '';
     RAISE NOTICE 'Sample Data:';
     RAISE NOTICE '  • 3 enterprise accounts (DEFAULT_ENTERPRISE, ACME_CORP, TECH_DIVISION)';

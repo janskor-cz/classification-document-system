@@ -1,0 +1,787 @@
+{% extends "base.html" %}
+
+{% block title %}Secure Document Access - Ephemeral DID{% endblock %}
+
+{% block head %}
+<style>
+    .ephemeral-access-container {
+        max-width: 900px;
+        margin: 0 auto;
+        padding: 20px;
+    }
+    
+    .security-badge {
+        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        color: white;
+        padding: 15px;
+        border-radius: 10px;
+        margin-bottom: 20px;
+        text-align: center;
+    }
+    
+    .security-badge .shield-icon {
+        font-size: 24px;
+        margin-right: 8px;
+    }
+    
+    .progress-container {
+        background: #f8f9fa;
+        border: 1px solid #dee2e6;
+        border-radius: 8px;
+        padding: 20px;
+        margin-bottom: 20px;
+        display: none;
+    }
+    
+    .progress-step {
+        display: flex;
+        align-items: center;
+        padding: 10px 0;
+        border-bottom: 1px solid #e9ecef;
+    }
+    
+    .progress-step:last-child {
+        border-bottom: none;
+    }
+    
+    .step-icon {
+        width: 30px;
+        height: 30px;
+        border-radius: 50%;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        margin-right: 15px;
+        font-size: 14px;
+        font-weight: bold;
+    }
+    
+    .step-icon.pending {
+        background-color: #6c757d;
+        color: white;
+    }
+    
+    .step-icon.active {
+        background-color: #007bff;
+        color: white;
+        animation: pulse 2s infinite;
+    }
+    
+    .step-icon.completed {
+        background-color: #28a745;
+        color: white;
+    }
+    
+    .step-icon.error {
+        background-color: #dc3545;
+        color: white;
+    }
+    
+    @keyframes pulse {
+        0% { transform: scale(1); }
+        50% { transform: scale(1.1); }
+        100% { transform: scale(1); }
+    }
+    
+    .security-warning {
+        background-color: #fff3cd;
+        border: 1px solid #ffeaa7;
+        border-radius: 8px;
+        padding: 15px;
+        margin-bottom: 20px;
+    }
+    
+    .security-warning .warning-icon {
+        color: #856404;
+        margin-right: 8px;
+    }
+    
+    .session-info {
+        background-color: #d1ecf1;
+        border: 1px solid #bee5eb;
+        border-radius: 8px;
+        padding: 15px;
+        margin-bottom: 20px;
+        display: none;
+    }
+    
+    .countdown-timer {
+        font-size: 18px;
+        font-weight: bold;
+        color: #007bff;
+    }
+    
+    .countdown-timer.warning {
+        color: #ffc107;
+    }
+    
+    .countdown-timer.critical {
+        color: #dc3545;
+        animation: blink 1s infinite;
+    }
+    
+    @keyframes blink {
+        50% { opacity: 0.5; }
+    }
+    
+    .document-info {
+        background-color: #f8f9fa;
+        border: 1px solid #dee2e6;
+        border-radius: 8px;
+        padding: 20px;
+        margin-bottom: 20px;
+    }
+    
+    .classification-badge {
+        display: inline-block;
+        padding: 4px 8px;
+        border-radius: 4px;
+        font-size: 12px;
+        font-weight: bold;
+        text-transform: uppercase;
+    }
+    
+    .classification-public {
+        background-color: #d4edda;
+        color: #155724;
+        border: 1px solid #c3e6cb;
+    }
+    
+    .classification-internal {
+        background-color: #fff3cd;
+        color: #856404;
+        border: 1px solid #ffeaa7;
+    }
+    
+    .classification-confidential {
+        background-color: #f8d7da;
+        color: #721c24;
+        border: 1px solid #f5c6cb;
+    }
+    
+    .key-management-info {
+        background-color: #e7f3ff;
+        border: 1px solid #b8daff;
+        border-radius: 8px;
+        padding: 15px;
+        margin-bottom: 20px;
+    }
+    
+    .download-section {
+        background-color: #f8f9fa;
+        border: 1px solid #dee2e6;
+        border-radius: 8px;
+        padding: 20px;
+        margin-bottom: 20px;
+        display: none;
+    }
+    
+    .cleanup-confirmation {
+        background-color: #d1ecf1;
+        border: 1px solid #bee5eb;
+        border-radius: 8px;
+        padding: 15px;
+        margin-top: 20px;
+        display: none;
+    }
+    
+    .error-container {
+        background-color: #f8d7da;
+        border: 1px solid #f5c6cb;
+        border-radius: 8px;
+        padding: 15px;
+        margin-bottom: 20px;
+        display: none;
+    }
+    
+    .btn-secure-access {
+        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        border: none;
+        color: white;
+        padding: 12px 24px;
+        font-size: 16px;
+        font-weight: 600;
+        border-radius: 8px;
+        cursor: pointer;
+        transition: all 0.3s ease;
+    }
+    
+    .btn-secure-access:hover {
+        transform: translateY(-2px);
+        box-shadow: 0 4px 8px rgba(0, 0, 0, 0.2);
+        color: white;
+    }
+    
+    .btn-secure-access:disabled {
+        opacity: 0.6;
+        cursor: not-allowed;
+        transform: none;
+        box-shadow: none;
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="ephemeral-access-container">
+    <div class="security-badge">
+        <span class="shield-icon">🔐</span>
+        <strong>Secure Document Access</strong> - Client-Side Ephemeral DID Encryption
+    </div>
+    
+    <!-- Document Information -->
+    <div class="document-info">
+        <h4>📄 Document Information</h4>
+        <div class="row">
+            <div class="col-md-8">
+                <p><strong>Document ID:</strong> <span id="document-id">{{ document.id if document else 'N/A' }}</span></p>
+                <p><strong>Filename:</strong> <span id="document-filename">{{ document.filename if document else 'N/A' }}</span></p>
+                <p><strong>Classification Level:</strong> 
+                    <span id="classification-badge" class="classification-badge">
+                        {{ document.classification_level_name if document else 'N/A' }}
+                    </span>
+                </p>
+                <p><strong>Size:</strong> <span id="document-size">{{ document.size if document else 'N/A' }}</span></p>
+            </div>
+            <div class="col-md-4">
+                <p><strong>Upload Date:</strong> {{ document.created_at.strftime('%Y-%m-%d %H:%M') if document else 'N/A' }}</p>
+                <p><strong>Uploaded By:</strong> {{ document.created_by_name if document else 'N/A' }}</p>
+            </div>
+        </div>
+    </div>
+    
+    <!-- Security Warning -->
+    <div class="security-warning">
+        <span class="warning-icon">⚠️</span>
+        <strong>Security Notice:</strong> This document will be accessed using ephemeral DID-based encryption. 
+        Your private key will be generated in your browser and never transmitted to our servers, ensuring maximum security.
+        The access session will expire automatically, and your ephemeral key will be permanently destroyed.
+    </div>
+    
+    <!-- Key Management Information -->
+    <div class="key-management-info">
+        <h5>🔑 Ephemeral Key Management</h5>
+        <ul class="mb-0">
+            <li><strong>Client-Side Generation:</strong> Your ephemeral DID and private key are generated entirely in your browser</li>
+            <li><strong>Perfect Forward Secrecy:</strong> Each document access uses a unique, temporary key pair</li>
+            <li><strong>Zero Server Exposure:</strong> Your private key never leaves your device</li>
+            <li><strong>Automatic Cleanup:</strong> Keys are automatically destroyed after use or session expiration</li>
+        </ul>
+    </div>
+    
+    <!-- Error Container -->
+    <div id="error-container" class="error-container">
+        <h5>❌ Error</h5>
+        <p id="error-message"></p>
+        <button type="button" class="btn btn-outline-danger" onclick="retryOperation()">
+            🔄 Retry
+        </button>
+    </div>
+    
+    <!-- Progress Container -->
+    <div id="progress-container" class="progress-container">
+        <h5>🔄 Secure Access Progress</h5>
+        
+        <div class="progress-step" id="step-1">
+            <div class="step-icon pending">1</div>
+            <div class="step-content">
+                <strong>Generate Ephemeral DID</strong>
+                <div class="step-details">Creating unique client-side DID:key pair...</div>
+            </div>
+        </div>
+        
+        <div class="progress-step" id="step-2">
+            <div class="step-icon pending">2</div>
+            <div class="step-content">
+                <strong>Verify Classification Credentials</strong>
+                <div class="step-details">Validating your access permissions...</div>
+            </div>
+        </div>
+        
+        <div class="progress-step" id="step-3">
+            <div class="step-icon pending">3</div>
+            <div class="step-content">
+                <strong>Create Access Session</strong>
+                <div class="step-details">Establishing secure ephemeral session...</div>
+            </div>
+        </div>
+        
+        <div class="progress-step" id="step-4">
+            <div class="step-icon pending">4</div>
+            <div class="step-content">
+                <strong>Encrypt Document</strong>
+                <div class="step-details">Encrypting document with your ephemeral public key...</div>
+            </div>
+        </div>
+        
+        <div class="progress-step" id="step-5">
+            <div class="step-icon pending">5</div>
+            <div class="step-content">
+                <strong>Client-Side Decryption</strong>
+                <div class="step-details">Decrypting document in your browser...</div>
+            </div>
+        </div>
+    </div>
+    
+    <!-- Session Information -->
+    <div id="session-info" class="session-info">
+        <h5>📊 Active Ephemeral Session</h5>
+        <div class="row">
+            <div class="col-md-6">
+                <p><strong>Session Token:</strong> <span id="session-token">N/A</span></p>
+                <p><strong>Ephemeral DID:</strong> <code id="ephemeral-did">N/A</code></p>
+            </div>
+            <div class="col-md-6">
+                <p><strong>Session Expires:</strong> <span id="session-expiry">N/A</span></p>
+                <p><strong>Time Remaining:</strong> <span id="countdown-timer" class="countdown-timer">N/A</span></p>
+            </div>
+        </div>
+    </div>
+    
+    <!-- Download Section -->
+    <div id="download-section" class="download-section">
+        <h5>📥 Document Download</h5>
+        <p>Your document has been successfully decrypted and is ready for download.</p>
+        <div class="d-flex gap-3 align-items-center">
+            <button type="button" class="btn btn-success" onclick="downloadDocument()">
+                📄 Download Document
+            </button>
+            <button type="button" class="btn btn-outline-secondary" onclick="viewDocument()">
+                👁️ View in Browser
+            </button>
+        </div>
+    </div>
+    
+    <!-- Access Request Form -->
+    <div id="access-request-form">
+        <h5>🚀 Request Secure Document Access</h5>
+        <form onsubmit="requestEphemeralAccess(event)">
+            <div class="mb-3">
+                <label for="business-justification" class="form-label">Business Justification</label>
+                <textarea class="form-control" id="business-justification" rows="3" 
+                          placeholder="Please explain why you need to access this document..." required></textarea>
+                <div class="form-text">This justification will be logged for audit purposes.</div>
+            </div>
+            
+            <div class="mb-3">
+                <label for="session-duration" class="form-label">Session Duration</label>
+                <select class="form-select" id="session-duration">
+                    <option value="60">1 hour (recommended)</option>
+                    <option value="30">30 minutes</option>
+                    <option value="15">15 minutes</option>
+                </select>
+                <div class="form-text">How long you need access to this document. Shorter durations are more secure.</div>
+            </div>
+            
+            <div class="mb-3">
+                <div class="form-check">
+                    <input class="form-check-input" type="checkbox" id="security-acknowledgment" required>
+                    <label class="form-check-label" for="security-acknowledgment">
+                        I understand that my ephemeral private key will be generated client-side and will be automatically destroyed after the session expires.
+                    </label>
+                </div>
+            </div>
+            
+            <div class="d-flex gap-3">
+                <button type="submit" class="btn-secure-access" id="request-access-btn">
+                    🔐 Generate Ephemeral DID & Request Access
+                </button>
+                <a href="{{ url_for('dashboard') }}" class="btn btn-outline-secondary">
+                    ← Back to Dashboard
+                </a>
+            </div>
+        </form>
+    </div>
+    
+    <!-- Cleanup Confirmation -->
+    <div id="cleanup-confirmation" class="cleanup-confirmation">
+        <h5>✅ Session Cleanup Complete</h5>
+        <p>Your ephemeral key has been securely destroyed and the session has been terminated.</p>
+        <div class="d-flex gap-3">
+            <button type="button" class="btn btn-primary" onclick="startNewSession()">
+                🔄 Start New Session
+            </button>
+            <a href="{{ url_for('dashboard') }}" class="btn btn-outline-secondary">
+                ← Back to Dashboard
+            </a>
+        </div>
+    </div>
+</div>
+
+<script>
+// Global variables for session management
+let currentSession = null;
+let countdownInterval = null;
+let documentData = {
+    id: {{ document.id if document else 'null' }},
+    filename: '{{ document.filename if document else '' }}',
+    classificationLevel: {{ document.classification_level if document else 'null' }}
+};
+
+// Wait for ephemeral DID manager to be ready
+document.addEventListener('ephemeralDIDManagerReady', function() {
+    console.log('✅ Ephemeral DID Manager is ready');
+});
+
+document.addEventListener('ephemeralDIDManagerError', function(event) {
+    console.error('❌ Ephemeral DID Manager initialization failed:', event.detail.error);
+    showError('Failed to initialize cryptographic system: ' + event.detail.error.message);
+});
+
+/**
+ * Request ephemeral document access
+ */
+async function requestEphemeralAccess(event) {
+    event.preventDefault();
+    
+    if (!window.ephemeralDIDManager) {
+        showError('Ephemeral DID Manager not initialized. Please refresh the page.');
+        return;
+    }
+    
+    try {
+        // Show progress
+        showProgress();
+        setStepActive(1);
+        
+        // Get form data
+        const businessJustification = document.getElementById('business-justification').value;
+        const sessionDuration = parseInt(document.getElementById('session-duration').value);
+        
+        // Step 1: Generate ephemeral DID
+        updateStepDetails(1, 'Generating unique DID:key pair in your browser...');
+        const didResult = await window.ephemeralDIDManager.generateEphemeralDIDKey(documentData.id);
+        setStepCompleted(1);
+        console.log('✅ Ephemeral DID generated:', didResult.ephemeralDID);
+        
+        // Step 2: Verify classification credentials
+        setStepActive(2);
+        updateStepDetails(2, 'Checking your classification credentials...');
+        
+        // Create ephemeral session request
+        const sessionRequest = {
+            documentId: documentData.id,
+            ephemeralDID: didResult.ephemeralDID,
+            ephemeralPublicKey: didResult.publicKeyJWK,
+            businessJustification: businessJustification,
+            sessionDurationMinutes: sessionDuration
+        };
+        
+        const sessionResponse = await fetch('/api/ephemeral/generate-session', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify(sessionRequest)
+        });
+        
+        if (!sessionResponse.ok) {
+            const errorData = await sessionResponse.json();
+            throw new Error(errorData.error || 'Failed to create ephemeral session');
+        }
+        
+        const sessionData = await sessionResponse.json();
+        setStepCompleted(2);
+        
+        // Step 3: Create access session
+        setStepActive(3);
+        updateStepDetails(3, 'Establishing secure ephemeral session...');
+        
+        // Store session information
+        currentSession = {
+            sessionToken: sessionData.sessionToken,
+            ephemeralDID: didResult.ephemeralDID,
+            keyId: didResult.keyId,
+            expiresAt: new Date(sessionData.expiresAt)
+        };
+        
+        setStepCompleted(3);
+        
+        // Step 4: Encrypt document
+        setStepActive(4);
+        updateStepDetails(4, 'Encrypting document with your ephemeral public key...');
+        
+        const encryptResponse = await fetch(`/api/ephemeral/encrypt-document/${sessionData.sessionToken}`);
+        if (!encryptResponse.ok) {
+            const errorData = await encryptResponse.json();
+            throw new Error(errorData.error || 'Failed to encrypt document');
+        }
+        
+        const encryptedData = await encryptResponse.json();
+        setStepCompleted(4);
+        
+        // Step 5: Client-side decryption
+        setStepActive(5);
+        updateStepDetails(5, 'Decrypting document in your browser...');
+        
+        const decryptedData = await window.ephemeralDIDManager.decryptWithPrivateKey(
+            encryptedData, 
+            didResult.keyId
+        );
+        
+        setStepCompleted(5);
+        
+        // Show session info and download options
+        showSessionInfo(currentSession);
+        showDownloadSection(decryptedData);
+        startCountdown(currentSession.expiresAt);
+        
+        // Hide form
+        document.getElementById('access-request-form').style.display = 'none';
+        
+    } catch (error) {
+        console.error('❌ Ephemeral access request failed:', error);
+        showError(error.message);
+        resetProgress();
+    }
+}
+
+/**
+ * Show progress container
+ */
+function showProgress() {
+    document.getElementById('progress-container').style.display = 'block';
+    document.getElementById('error-container').style.display = 'none';
+}
+
+/**
+ * Set step as active
+ */
+function setStepActive(stepNumber) {
+    const stepIcon = document.querySelector(`#step-${stepNumber} .step-icon`);
+    stepIcon.className = 'step-icon active';
+}
+
+/**
+ * Set step as completed
+ */
+function setStepCompleted(stepNumber) {
+    const stepIcon = document.querySelector(`#step-${stepNumber} .step-icon`);
+    stepIcon.className = 'step-icon completed';
+    stepIcon.innerHTML = '✓';
+}
+
+/**
+ * Set step as error
+ */
+function setStepError(stepNumber) {
+    const stepIcon = document.querySelector(`#step-${stepNumber} .step-icon`);
+    stepIcon.className = 'step-icon error';
+    stepIcon.innerHTML = '✗';
+}
+
+/**
+ * Update step details
+ */
+function updateStepDetails(stepNumber, details) {
+    const stepDetails = document.querySelector(`#step-${stepNumber} .step-details`);
+    stepDetails.textContent = details;
+}
+
+/**
+ * Show session information
+ */
+function showSessionInfo(session) {
+    document.getElementById('session-token').textContent = session.sessionToken;
+    document.getElementById('ephemeral-did').textContent = session.ephemeralDID;
+    document.getElementById('session-expiry').textContent = session.expiresAt.toLocaleString();
+    document.getElementById('session-info').style.display = 'block';
+}
+
+/**
+ * Show download section
+ */
+function showDownloadSection(decryptedData) {
+    // Store decrypted data for download
+    window.decryptedDocumentData = decryptedData;
+    document.getElementById('download-section').style.display = 'block';
+}
+
+/**
+ * Start countdown timer
+ */
+function startCountdown(expiresAt) {
+    const timerElement = document.getElementById('countdown-timer');
+    
+    countdownInterval = setInterval(() => {
+        const now = new Date();
+        const timeLeft = expiresAt - now;
+        
+        if (timeLeft <= 0) {
+            // Session expired
+            clearInterval(countdownInterval);
+            handleSessionExpiry();
+            return;
+        }
+        
+        const minutes = Math.floor(timeLeft / 60000);
+        const seconds = Math.floor((timeLeft % 60000) / 1000);
+        
+        timerElement.textContent = `${minutes}:${seconds.toString().padStart(2, '0')}`;
+        
+        // Update timer styling based on time left
+        if (timeLeft < 5 * 60 * 1000) { // Less than 5 minutes
+            timerElement.className = 'countdown-timer critical';
+        } else if (timeLeft < 10 * 60 * 1000) { // Less than 10 minutes
+            timerElement.className = 'countdown-timer warning';
+        }
+        
+    }, 1000);
+}
+
+/**
+ * Handle session expiry
+ */
+function handleSessionExpiry() {
+    console.log('⏰ Session expired, cleaning up...');
+    
+    if (currentSession && currentSession.keyId) {
+        // Destroy ephemeral key
+        window.ephemeralDIDManager.destroyEphemeralKey(currentSession.keyId);
+    }
+    
+    // Clear sensitive data
+    if (window.decryptedDocumentData) {
+        delete window.decryptedDocumentData;
+    }
+    
+    // Show cleanup confirmation
+    document.getElementById('session-info').style.display = 'none';
+    document.getElementById('download-section').style.display = 'none';
+    document.getElementById('cleanup-confirmation').style.display = 'block';
+    
+    // Reset session
+    currentSession = null;
+}
+
+/**
+ * Download document
+ */
+function downloadDocument() {
+    if (!window.decryptedDocumentData) {
+        showError('Document data not available');
+        return;
+    }
+    
+    try {
+        // Create blob and download
+        const blob = new Blob([window.decryptedDocumentData.content], { 
+            type: window.decryptedDocumentData.contentType || 'application/octet-stream' 
+        });
+        
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = documentData.filename;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+        
+        console.log('✅ Document downloaded successfully');
+        
+    } catch (error) {
+        console.error('❌ Download failed:', error);
+        showError('Failed to download document: ' + error.message);
+    }
+}
+
+/**
+ * View document in browser
+ */
+function viewDocument() {
+    if (!window.decryptedDocumentData) {
+        showError('Document data not available');
+        return;
+    }
+    
+    try {
+        const blob = new Blob([window.decryptedDocumentData.content], { 
+            type: window.decryptedDocumentData.contentType || 'application/octet-stream' 
+        });
+        
+        const url = URL.createObjectURL(blob);
+        window.open(url, '_blank');
+        
+        console.log('✅ Document opened in new tab');
+        
+    } catch (error) {
+        console.error('❌ View failed:', error);
+        showError('Failed to view document: ' + error.message);
+    }
+}
+
+/**
+ * Show error message
+ */
+function showError(message) {
+    document.getElementById('error-message').textContent = message;
+    document.getElementById('error-container').style.display = 'block';
+}
+
+/**
+ * Hide error message
+ */
+function hideError() {
+    document.getElementById('error-container').style.display = 'none';
+}
+
+/**
+ * Reset progress
+ */
+function resetProgress() {
+    // Reset all steps to pending
+    for (let i = 1; i <= 5; i++) {
+        const stepIcon = document.querySelector(`#step-${i} .step-icon`);
+        stepIcon.className = 'step-icon pending';
+        stepIcon.innerHTML = i.toString();
+    }
+}
+
+/**
+ * Retry operation
+ */
+function retryOperation() {
+    hideError();
+    resetProgress();
+    document.getElementById('progress-container').style.display = 'none';
+    document.getElementById('access-request-form').style.display = 'block';
+}
+
+/**
+ * Start new session
+ */
+function startNewSession() {
+    // Reset UI
+    document.getElementById('cleanup-confirmation').style.display = 'none';
+    document.getElementById('access-request-form').style.display = 'block';
+    document.getElementById('progress-container').style.display = 'none';
+    
+    // Clear form
+    document.getElementById('business-justification').value = '';
+    document.getElementById('security-acknowledgment').checked = false;
+    
+    resetProgress();
+    hideError();
+}
+
+// Handle page unload - cleanup keys
+window.addEventListener('beforeunload', function() {
+    if (currentSession && currentSession.keyId && window.ephemeralDIDManager) {
+        window.ephemeralDIDManager.destroyEphemeralKey(currentSession.keyId);
+    }
+});
+
+// Auto-cleanup on page focus change
+document.addEventListener('visibilitychange', function() {
+    if (document.visibilityState === 'hidden' && currentSession && currentSession.keyId) {
+        // Optionally cleanup when user switches tabs (aggressive security)
+        setTimeout(() => {
+            if (document.visibilityState === 'hidden') {
+                console.log('🔒 Auto-cleanup due to page being hidden for extended time');
+                handleSessionExpiry();
+            }
+        }, 5 * 60 * 1000); // 5 minutes
+    }
+});
+</script>
+{% endblock %}
