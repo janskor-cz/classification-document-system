@@ -10,22 +10,41 @@ This is the **Classification Document System** - a Flask-based web application t
 
 ### Starting the Application
 
-**Working Method (Issuer Agent Only)**:
+**Complete Multi-Agent Setup (Recommended)**:
 ```bash
-# Start Identus Issuer Agent (proven working setup)
-./scripts/setup-issuer-only.sh
+# 1. Setup PostgreSQL database with all required databases and users
+./scripts/setup-database.sh
 
-# Start Flask application (after agent is running)
+# 2. Setup all 3 Identus agents (issuer, holder, verifier) with vault containers
+./scripts/setup-agents.sh
+
+# 3. Start Flask application (full SSI functionality available)
 python app.py
 ```
 
-**Alternative Method (Full Docker Compose)**:
+**Alternative Method (Database Only)**:
 ```bash
-# Start supporting services only
+# Start supporting services only  
 docker-compose up -d postgres redis
 
-# Start Flask application (will work without Identus for basic functionality)
+# Start Flask application (basic functionality without credential issuance)
 python app.py
+```
+
+**Environment Setup**:
+```bash
+# Create virtual environment (recommended)
+python -m venv venv
+source venv/bin/activate  # Linux/Mac
+# or
+venv\Scripts\activate     # Windows
+
+# Install dependencies
+pip install -r requirements.txt
+
+# Copy environment configuration
+cp .env.example .env
+# Edit .env with your specific settings
 ```
 
 ### Database Operations
@@ -64,31 +83,47 @@ curl http://localhost:8080/_system/health
 ./scripts/check-identus-status.sh
 ```
 
-### Managing Identus Agents
+### Managing Identus Multi-Agent System
 
 ```bash
-# Start Issuer Agent (WORKING)
-./scripts/setup-issuer-only.sh
+# Start complete 3-agent system (issuer, holder, verifier)
+./scripts/setup-agents.sh
 
-# Check agent status
-./scripts/check-identus-status.sh
+# Check system status
+./scripts/setup-agents.sh status
 
-# Stop agents
-./scripts/stop-identus-agents.sh
+# Stop and cleanup all agents and vaults
+./scripts/setup-agents.sh cleanup
 
-# Manual cleanup
-sudo docker stop issuer-postgres issuer-vault issuer-agent
-sudo docker rm issuer-postgres issuer-vault issuer-agent
+# Health checks for individual agents
+curl http://localhost:8080/_system/health  # Issuer
+curl http://localhost:7000/_system/health  # Holder  
+curl http://localhost:9000/_system/health  # Verifier
 ```
 
 ## Architecture Overview
 
 ### Core Components
 
-1. **Flask Web Application** (`app.py`) - Main web server with HTML templates and REST API
-2. **Configuration Management** (`config.py`) - Environment-aware configuration with dataclasses
-3. **Identus Integration** (`identus_wrapper.py`) - Wrapper for Hyperledger Identus credential operations
+1. **Flask Web Application** (`app.py`) - Main web server with HTML templates and REST API endpoints
+2. **Configuration Management** (`config.py`) - Environment-aware configuration using dataclasses with support for development/testing/production environments
+3. **Identus Integration** (`identus_wrapper.py`) - Wrapper for Hyperledger Identus credential operations with auto-detection of GitHub Codespaces vs local environments
 4. **Frontend** (`frontend/`) - HTML templates with Bootstrap UI and vanilla JavaScript
+
+### Application Architecture
+
+**Request Flow**:
+- HTTP requests → Flask routes in `app.py` 
+- Configuration loaded via `config.py` with environment-specific settings
+- Identus operations handled by `identus_wrapper.py` 
+- Templates rendered from `frontend/templates/` with static assets from `frontend/static/`
+- Database operations use raw SQL migrations from `scripts/init-db.sql`
+
+**State Management**:
+- Application data stored in global `applications_db` list (loads from Identus on startup)
+- User session simulated via `current_user` dict (production should implement proper auth)
+- Configuration managed through environment-aware Config class with dataclass sections
+- Real-time Identus integration with fallback to mock data when agents unavailable
 
 ### Key Directories
 
@@ -107,17 +142,23 @@ The system uses PostgreSQL with these main tables:
 - `credentials` - Issued Identus credentials tracking
 - `audit_logs` - Security and access audit trail
 
-### Identus Integration
+### Identus Multi-Agent Integration
 
-**WORKING SETUP**: Single Identus Issuer Agent
-- **Issuer Agent** (port 8080) - Issues credentials to approved labelers
-- **Health Check**: `http://localhost:8080/_system/health`
-- **DIDComm Endpoint**: `http://localhost:8090`
+**COMPLETE SSI SYSTEM**: Full 3-Agent Setup
+- **Issuer Agent** (port 8080) - Issues verifiable credentials to approved data labelers
+- **Holder Agent** (port 7000) - Manages user DIDs and credential wallets
+- **Verifier Agent** (port 9000) - Verifies credentials for access control and document classification
+
+**Service Endpoints**:
+- **Issuer HTTP**: `http://localhost:8080` | **DIDComm**: `http://localhost:8090`
+- **Holder HTTP**: `http://localhost:7000` | **DIDComm**: `http://localhost:7001`  
+- **Verifier HTTP**: `http://localhost:9000` | **DIDComm**: `http://localhost:9001`
 
 **Infrastructure Requirements**:
-- **PostgreSQL**: Multiple databases (`identus_db`, `pollux`, `connect`, `agent`, `node_db`)
-- **Vault**: Development mode for secrets management
-- **Host Networking**: Required for proper agent connectivity
+- **PostgreSQL**: Agent-specific databases (`issuer_identus_db`, `holder_identus_db`, `verifier_identus_db`) plus global databases (`pollux`, `connect`, `agent`, `node_db`)
+- **Vault Services**: Individual vault containers for secure key management (ports 8200, 7200, 9200)
+- **Global Users**: `pollux-application-user`, `connect-application-user`, `agent-application-user` required by all agents
+- **Host Networking**: Required for proper agent connectivity and vault communication
 
 Credentials are issued with a custom schema for data labeler certification containing fields like `fullName`, `email`, `specialization`, `experienceLevel`, and `labelerID`.
 
@@ -132,13 +173,18 @@ The application uses environment-based configuration with three modes:
 
 ### Key Environment Variables
 
-Copy `.env.example` to `.env` and configure (note: `.env.example` was deleted, create as needed):
+Copy `.env.example` to `.env` and configure:
 - `FLASK_ENV` - Environment mode (development/testing/production)
-- `DATABASE_URL` - Database connection string
-- `SECRET_KEY` / `JWT_SECRET_KEY` - Security keys for sessions/tokens
+- `DATABASE_URL` - Database connection string (defaults to SQLite for dev, PostgreSQL for production)
+- `SECRET_KEY` / `JWT_SECRET_KEY` - Security keys for sessions/tokens (auto-generated if not provided)
 - `IDENTUS_ISSUER_URL` - Identus issuer agent endpoint (http://localhost:8080/cloud-agent)
-- `UPLOAD_FOLDER` - Document storage location
+- `IDENTUS_HOLDER_URL` - Holder agent endpoint (http://localhost:7000/cloud-agent)
+- `IDENTUS_VERIFIER_URL` - Verifier agent endpoint (http://localhost:9000/cloud-agent)
+- `UPLOAD_FOLDER` - Document storage location (defaults to 'uploads')
+- `MAX_FILE_SIZE` - Maximum document upload size (defaults to 100MB)
 - `CODESPACES` - Auto-detected in GitHub Codespaces for environment configuration
+
+**Important**: The `.env.example` file contains comprehensive configuration options with documentation for each setting.
 
 ### Classification Levels
 
@@ -176,6 +222,57 @@ Key patterns to follow:
 - Follow Flask blueprint patterns for route organization
 - Use the Identus client for credential operations
 - Maintain classification level access controls
+
+### Complete Development Workflow
+
+**1. Initial Setup**:
+```bash
+# Clone and setup environment
+python -m venv venv && source venv/bin/activate
+pip install -r requirements.txt
+cp .env.example .env  # Edit as needed
+```
+
+**2. Start Infrastructure**:
+```bash
+# Start database with all required databases and users
+./scripts/setup-database.sh
+
+# Start complete 3-agent SSI system
+./scripts/setup-agents.sh
+
+# Verify all services are healthy
+curl http://localhost:8080/_system/health  # {"version":"1.33.0"}
+curl http://localhost:7000/_system/health  # {"version":"1.33.0"}  
+curl http://localhost:9000/_system/health  # {"version":"1.33.0"}
+```
+
+**3. Run Application**:
+```bash
+# Start Flask application with full SSI capabilities
+python app.py
+# Access at: http://localhost:5000
+```
+
+**4. Development Lifecycle**:
+```bash
+# Check system status anytime
+./scripts/setup-agents.sh status
+
+# Stop everything cleanly
+./scripts/setup-agents.sh cleanup  # Stops agents and vaults
+sudo docker stop identus-postgres  # Stop database when done
+
+# Quick restart
+./scripts/setup-database.sh && ./scripts/setup-agents.sh
+```
+
+**SSI Development Features Available**:
+- **Full Credential Issuance**: Issue verifiable credentials to approved data labelers
+- **DID Management**: Complete decentralized identifier lifecycle
+- **Verification Workflows**: Verify credentials for document access control
+- **Multi-Agent Interactions**: Test complete issuer→holder→verifier flows
+- **Production Architecture**: Develop against production-equivalent SSI infrastructure
 
 ### Testing and Code Quality
 
@@ -239,43 +336,79 @@ The current working setup uses:
 5. **Vault Integration**: HashiCorp Vault in development mode with root token
 6. **Version**: Hyperledger Identus Cloud Agent 1.33.0 (proven stable)
 
-### Key Technical Requirements
+### Multi-Agent System Architecture
 
 **Required Containers**:
-- `issuer-postgres` - PostgreSQL with multiple databases and users
+- `identus-postgres` - PostgreSQL with multiple databases and global users
 - `issuer-vault` - Vault in development mode (port 8200)
+- `holder-vault` - Vault in development mode (port 7200)  
+- `verifier-vault` - Vault in development mode (port 9200)
 - `issuer-agent` - Identus Cloud Agent (ports 8080, 8090)
+- `holder-agent` - Identus Cloud Agent (ports 7000, 7001)
+- `verifier-agent` - Identus Cloud Agent (ports 9000, 9001)
 
-**Required Environment Variables for Agent**:
+**Database Structure**:
+- **Agent Databases**: `issuer_identus_db`, `holder_identus_db`, `verifier_identus_db`
+- **Global Databases**: `pollux`, `connect`, `agent`, `node_db`, `identus_db`
+- **Global Users**: `pollux-application-user`, `connect-application-user`, `agent-application-user` 
+- **Agent Users**: `issuer_user`, `holder_user`, `verifier_user`
+
+**Port Allocation**:
 ```
-API_KEY_ENABLED=false
-AGENT_VERSION=1.33.0  
-PORT=8080
-PG_HOST=localhost
-PG_PORT=5432
-PG_DATABASE=identus_db
-PG_USERNAME=postgres
-PG_PASSWORD=postgres
-AGENT_HTTP_PORT=8080
-AGENT_DIDCOMM_PORT=8090
-AGENT_HTTP_ENDPOINT="http://localhost:8080"
-VAULT_DEV_ROOT_TOKEN_ID=root
-VAULT_ADDR=http://localhost:8200
-VAULT_TOKEN=root
+Database:     5432
+Issuer:       8080 (HTTP), 8090 (DIDComm), 8200 (Vault)
+Holder:       7000 (HTTP), 7001 (DIDComm), 7200 (Vault)
+Verifier:     9000 (HTTP), 9001 (DIDComm), 9200 (Vault)
 ```
 
 ### Script Locations
 
-Working Identus management scripts in `./scripts/`:
-- `setup-issuer-only.sh` - **WORKING** - Start Issuer agent with all requirements
-- `check-identus-status.sh` - Health check for agents
-- `stop-identus-agents.sh` - Stop all agents
-- `init-db.sql` - Database initialization for Flask app
+**Essential Scripts** in `./scripts/`:
+- `setup-database.sh` - **REQUIRED FIRST** - PostgreSQL database setup with health checks
+- `populate-database.sh` - Database population with Identus-specific databases and users
+- `setup-agents.sh` - **MAIN SCRIPT** - Complete Identus agents setup (issuer, holder, verifier)
+- `init-db.sql` - PostgreSQL schema for Flask application tables
 
-### Migration from Docker Compose
+**Usage Workflow**:
+```bash
+# 1. Setup database first (required)
+./scripts/setup-database.sh
 
-The original docker-compose setup had connectivity issues. For Identus functionality:
+# 2. Setup all Identus agents (issuer, holder, verifier)
+./scripts/setup-agents.sh
 
-1. Use the working script: `./scripts/setup-issuer-only.sh`
-2. The Flask app works with or without Identus
-3. Credential issuance requires the working Identus setup
+# Management commands
+./scripts/setup-agents.sh status         # Check current status
+./scripts/setup-agents.sh cleanup        # Stop and remove all agents
+```
+
+**What Each Script Does**:
+- `setup-database.sh`: Creates PostgreSQL container with health checks and basic database setup
+- `populate-database.sh`: Creates all agent databases, global users, and grants proper privileges automatically
+- `setup-agents.sh`: **COMPLETE SSI SYSTEM** - Starts all 3 agents with dedicated vaults, includes global user validation
+- `init-db.sql`: PostgreSQL schema for Flask application tables (users, applications, documents, credentials, audit_logs)
+
+**Advanced Features**:
+- **Auto-Detection**: Scripts automatically detect missing global users and run population as needed
+- **Error Recovery**: Built-in validation and self-healing capabilities
+- **Health Monitoring**: Comprehensive health checks for all services with retry logic
+- **Status Reporting**: Detailed status information for troubleshooting and monitoring
+
+### Complete Multi-Agent SSI System
+
+The scripts provide a full Self-Sovereign Identity infrastructure:
+
+1. **Production-Ready Architecture**: Complete issuer-holder-verifier triangle for full SSI workflows
+2. **Robust Database Management**: Automatic creation of all required databases and global users that agents expect
+3. **Sequential Startup**: Agents start individually to prevent database initialization conflicts
+4. **Comprehensive Health Monitoring**: Multi-level health checks for agents, vaults, and database connectivity
+5. **Host Network Optimization**: Uses proven host networking for optimal performance and connectivity
+6. **Automatic Error Recovery**: Scripts detect missing users/databases and auto-populate as needed
+7. **Easy Management**: Simple commands for complete system lifecycle management
+
+**Key Features**:
+- **3-Agent Setup**: Full SSI triangle (issuer → holder ← verifier)
+- **Isolated Vault Security**: Each agent has dedicated vault for key management
+- **Global User Management**: Automatically creates `pollux-application-user`, `connect-application-user`, `agent-application-user`  
+- **Self-Healing**: Detects configuration issues and automatically runs population scripts
+- **Production Ready**: Suitable for development, testing, and production deployments

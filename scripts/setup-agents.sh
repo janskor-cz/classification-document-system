@@ -1,8 +1,43 @@
 #!/bin/bash
 
-# Identus Agents Setup with Isolated Containers and Database Connectivity
-# Sets up Issuer, Holder, and Verifier agents with isolated vault containers
-# Connects to shared PostgreSQL database and checks/creates databases and users
+# Hyperledger Identus Multi-Agent Setup Script
+# 
+# This script sets up a complete 3-agent SSI (Self-Sovereign Identity) infrastructure:
+# - Issuer Agent (port 8080) - Issues verifiable credentials
+# - Holder Agent (port 7000) - Manages user DIDs and credentials  
+# - Verifier Agent (port 9000) - Verifies credentials for access control
+#
+# Prerequisites:
+# - Docker must be installed and running
+# - PostgreSQL database container must be running (use ./setup-database.sh)
+#
+# Architecture:
+# - All agents use host networking for optimal connectivity
+# - Each agent has dedicated Vault container for secure key management
+# - Shared PostgreSQL database with agent-specific schemas
+# - Standard Identus users created for all agents
+#
+# Usage:
+#   ./setup-agent.sh          # Start all agents
+#   ./setup-agent.sh cleanup  # Stop and remove all containers
+#   ./setup-agent.sh status   # Show current status
+#
+# Example Workflow:
+#   1. ./setup-database.sh    # Set up PostgreSQL database
+#   2. ./setup-agent.sh       # Set up all 3 agents and vaults
+#   3. ./setup-agent.sh status # Verify everything is running
+#
+# Ports Used:
+#   8080 - Issuer Agent HTTP
+#   8090 - Issuer Agent DIDComm
+#   8200 - Issuer Vault
+#   7000 - Holder Agent HTTP
+#   7001 - Holder Agent DIDComm  
+#   7200 - Holder Vault
+#   9000 - Verifier Agent HTTP
+#   9001 - Verifier Agent DIDComm
+#   9200 - Verifier Vault
+#   5432 - PostgreSQL Database
 
 set -e
 
@@ -25,17 +60,12 @@ POSTGRES_PASSWORD="postgres"
 AGENT_VERSION="1.33.0"
 AGENT_IMAGE="ghcr.io/hyperledger/identus-cloud-agent:${AGENT_VERSION}"
 
-# Network configuration for isolated vaults
-ISSUER_NETWORK="identus-issuer-network"
-HOLDER_NETWORK="identus-holder-network"
-VERIFIER_NETWORK="identus-verifier-network"
+# Vault ports for each agent
+ISSUER_VAULT_PORT="8200"
+HOLDER_VAULT_PORT="7200"
+VERIFIER_VAULT_PORT="9200"
 
-# Vault IPs in their respective networks
-ISSUER_VAULT_IP="172.18.0.20"
-HOLDER_VAULT_IP="172.21.0.20"
-VERIFIER_VAULT_IP="172.20.0.20"
-
-echo -e "${BLUE}🚀 Identus Agents Setup with Isolated Containers${NC}"
+echo -e "${BLUE}🚀 Identus Agents Setup${NC}"
 echo -e "${BLUE}=================================================${NC}"
 echo -e "${CYAN}Agent Version: $AGENT_VERSION${NC}"
 echo -e "${CYAN}Database: $POSTGRES_HOST:$POSTGRES_PORT${NC}"
@@ -53,8 +83,6 @@ cleanup() {
     sudo docker stop issuer-vault holder-vault verifier-vault 2>/dev/null || true
     sudo docker rm issuer-vault holder-vault verifier-vault 2>/dev/null || true
     
-    # Remove networks
-    sudo docker network rm $ISSUER_NETWORK $HOLDER_NETWORK $VERIFIER_NETWORK 2>/dev/null || true
 }
 
 # Check if database container is running
@@ -108,9 +136,19 @@ check_and_populate_databases() {
     
     local needs_population=false
     
-    # Check each agent
+    # Check each agent database
     for agent in issuer holder verifier; do
         if ! check_agent_database $agent; then
+            needs_population=true
+        fi
+    done
+    
+    # Check if global users exist (required by Identus agents)
+    local global_users=("pollux-application-user" "connect-application-user" "agent-application-user")
+    for user in "${global_users[@]}"; do
+        local user_exists=$(sudo docker exec $POSTGRES_CONTAINER psql -U $POSTGRES_USER -t -c "SELECT 1 FROM pg_roles WHERE rolname='$user';" | xargs)
+        if [ "$user_exists" != "1" ]; then
+            echo -e "${YELLOW}⚠️  Global user '$user' missing${NC}"
             needs_population=true
         fi
     done
@@ -138,39 +176,21 @@ check_and_populate_databases() {
     return 0
 }
 
-# Create isolated networks for vaults
-create_networks() {
-    echo -e "${YELLOW}🌐 Creating isolated networks for vault containers...${NC}"
-    
-    # Remove existing networks
-    sudo docker network rm $ISSUER_NETWORK $HOLDER_NETWORK $VERIFIER_NETWORK 2>/dev/null || true
-    
-    # Create networks with different subnets
-    sudo docker network create --driver bridge --subnet=172.18.0.0/16 $ISSUER_NETWORK
-    sudo docker network create --driver bridge --subnet=172.21.0.0/16 $HOLDER_NETWORK  
-    sudo docker network create --driver bridge --subnet=172.20.0.0/16 $VERIFIER_NETWORK
-    
-    echo -e "${GREEN}✅ Networks created${NC}"
-}
 
-# Setup vault for an agent
+# Setup vault for an agent (simplified host networking)
 setup_vault() {
     local agent_name=$1
-    local network_name=$2
-    local vault_ip=$3
-    local vault_port=$4
+    local vault_port=$2
     local vault_token="${agent_name}_root"
     
     echo -e "${YELLOW}🔐 Setting up $agent_name vault...${NC}"
     
     sudo docker run -d \
         --name ${agent_name}-vault \
-        --network $network_name \
-        --ip $vault_ip \
-        -p $vault_port:8200 \
-        --cap-add=IPC_LOCK \
+        --network host \
         -e VAULT_DEV_ROOT_TOKEN_ID=$vault_token \
-        -e VAULT_DEV_LISTEN_ADDRESS=0.0.0.0:8200 \
+        -e VAULT_DEV_LISTEN_ADDRESS=0.0.0.0:$vault_port \
+        -e VAULT_ADDR=http://localhost:$vault_port \
         hashicorp/vault:latest
     
     echo -e "${GREEN}✅ $agent_name vault started on port $vault_port${NC}"
@@ -221,9 +241,14 @@ setup_agent() {
         -e VAULT_DEV_ROOT_TOKEN_ID=$vault_token \
         -e VAULT_ADDR=http://localhost:$vault_port \
         -e VAULT_TOKEN=$vault_token \
+        -e DEFAULT_WALLET_ENABLED=true \
         $AGENT_IMAGE
     
     echo -e "${GREEN}✅ $agent_name agent started on port $http_port${NC}"
+    
+    # Wait for agent to initialize database (avoid conflicts)
+    echo -e "${YELLOW}  Waiting for $agent_name to initialize database...${NC}"
+    sleep 20
 }
 
 # Test agent health
@@ -257,30 +282,36 @@ test_agent() {
 
 # Show final status
 show_status() {
-    echo -e "${BLUE}📊 Agents Status:${NC}"
+    echo -e "${BLUE}📊 Identus Multi-Agent Status:${NC}"
     echo ""
     
     echo -e "${YELLOW}Running Containers:${NC}"
-    sudo docker ps --format "table {{.Names}}\t{{.Status}}\t{{.Ports}}" | grep -E "(agent|vault|PORTS)" || echo "No agent containers running"
+    sudo docker ps --format "table {{.Names}}\t{{.Status}}\t{{.Ports}}" | grep -E "(agent|vault|identus-postgres|PORTS)" || echo "No containers running"
     echo ""
     
     echo -e "${YELLOW}Service Information:${NC}"
     echo -e "${CYAN}  Database:       $POSTGRES_HOST:$POSTGRES_PORT${NC}"
-    echo -e "${CYAN}  Issuer Agent:   http://localhost:8080${NC}"
-    echo -e "${CYAN}  Holder Agent:   http://localhost:7000${NC}"
-    echo -e "${CYAN}  Verifier Agent: http://localhost:9000${NC}"
+    echo -e "${CYAN}  Issuer Agent:   http://localhost:8080 (Credential Issuing)${NC}"
+    echo -e "${CYAN}  Holder Agent:   http://localhost:7000 (DID & Wallet Management)${NC}"
+    echo -e "${CYAN}  Verifier Agent: http://localhost:9000 (Credential Verification)${NC}"
+    echo ""
+    
+    echo -e "${YELLOW}Vault Services:${NC}"
+    echo -e "${CYAN}  Issuer Vault:   http://localhost:$ISSUER_VAULT_PORT${NC}"
+    echo -e "${CYAN}  Holder Vault:   http://localhost:$HOLDER_VAULT_PORT${NC}"
+    echo -e "${CYAN}  Verifier Vault: http://localhost:$VERIFIER_VAULT_PORT${NC}"
     echo ""
     
     echo -e "${YELLOW}Health Check Commands:${NC}"
-    echo -e "${CYAN}  curl http://localhost:8080/_system/health${NC}"
-    echo -e "${CYAN}  curl http://localhost:7000/_system/health${NC}"
-    echo -e "${CYAN}  curl http://localhost:9000/_system/health${NC}"
+    echo -e "${CYAN}  curl http://localhost:8080/_system/health  # Issuer${NC}"
+    echo -e "${CYAN}  curl http://localhost:7000/_system/health  # Holder${NC}"
+    echo -e "${CYAN}  curl http://localhost:9000/_system/health  # Verifier${NC}"
     echo ""
     
     echo -e "${YELLOW}Management Commands:${NC}"
-    echo -e "${CYAN}  Stop All:       sudo docker stop issuer-agent holder-agent verifier-agent issuer-vault holder-vault verifier-vault${NC}"
-    echo -e "${CYAN}  Remove All:     sudo docker rm issuer-agent holder-agent verifier-agent issuer-vault holder-vault verifier-vault${NC}"
-    echo -e "${CYAN}  Cleanup:        ./scripts/setup-agents.sh cleanup${NC}"
+    echo -e "${CYAN}  Stop All:       ./scripts/setup-agent.sh cleanup${NC}"
+    echo -e "${CYAN}  Check Status:   ./scripts/setup-agent.sh status${NC}"
+    echo -e "${CYAN}  Database Setup: ./scripts/setup-database.sh${NC}"
 }
 
 # Main setup function
@@ -306,28 +337,29 @@ main() {
         return 1
     fi
     
-    # Create isolated networks
-    if ! create_networks; then
-        echo -e "${RED}❌ Network creation failed${NC}"
-        return 1
-    fi
-    
-    # Setup vaults
-    setup_vault "issuer" $ISSUER_NETWORK $ISSUER_VAULT_IP 8200 &
-    setup_vault "holder" $HOLDER_NETWORK $HOLDER_VAULT_IP 7200 &
-    setup_vault "verifier" $VERIFIER_NETWORK $VERIFIER_VAULT_IP 9200 &
+    # Setup vaults (using host networking)
+    setup_vault "issuer" $ISSUER_VAULT_PORT &
+    setup_vault "holder" $HOLDER_VAULT_PORT &
+    setup_vault "verifier" $VERIFIER_VAULT_PORT &
     
     # Wait for vaults to start
     wait
     sleep 5
     
-    # Setup agents
-    setup_agent "issuer" 8080 8090 8200
-    setup_agent "holder" 7000 7001 7200  
-    setup_agent "verifier" 9000 9001 9200
+    # Setup agents ONE AT A TIME to avoid PostgreSQL conflicts
+    echo -e "${CYAN}🔄 Starting agents sequentially to avoid database conflicts...${NC}"
+    
+    echo -e "${BLUE}Step 1: Starting Issuer Agent${NC}"
+    setup_agent "issuer" 8080 8090 $ISSUER_VAULT_PORT
+    
+    echo -e "${BLUE}Step 2: Starting Holder Agent${NC}"  
+    setup_agent "holder" 7000 7001 $HOLDER_VAULT_PORT
+    
+    echo -e "${BLUE}Step 3: Starting Verifier Agent${NC}"
+    setup_agent "verifier" 9000 9001 $VERIFIER_VAULT_PORT
     
     # Wait for agents to initialize
-    echo -e "${YELLOW}⏳ Waiting 30 seconds for agents to initialize...${NC}"
+    echo -e "${YELLOW}⏳ Waiting additional 30 seconds for full initialization...${NC}"
     sleep 30
     
     # Test agents

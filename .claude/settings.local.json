@@ -159,7 +159,11 @@
       "Bash(-e VAULT_TOKEN=root )",
       "Bash(-e PG_HOST=verifier-postgres )",
       "Bash(-e PG_PORT=5432 )",
-      "Bash(alpine sh:*)"
+      "Bash(alpine sh:*)",
+      "Bash(./scripts/setup-database.sh:*)",
+      "Bash(./scripts/setup-agents.sh:*)",
+      "Bash(./scripts/populate-database.sh:*)",
+      "Bash(git add:*)"
     ],
     "deny": []
   }

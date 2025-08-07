@@ -71,61 +71,88 @@ create_agent_users() {
     
     echo -e "${YELLOW}👥 Creating users for $agent_name agent...${NC}"
     
-    # Define users with their passwords
-    local users=(
-        "${agent_name}-pollux-application-user:${agent_name}_pollux_pass"
-        "${agent_name}-connect-application-user:${agent_name}_connect_pass"
-        "${agent_name}-agent-application-user:${agent_name}_agent_pass"
+    # Define agent-specific users
+    local agent_users=(
         "${agent_name}_user:${agent_name}_pass"
     )
     
-    for user_info in "${users[@]}"; do
+    for user_info in "${agent_users[@]}"; do
         local username="${user_info%:*}"
         local password="${user_info#*:}"
         
-        echo -e "${CYAN}  Creating user: $username${NC}"
+        echo -e "${CYAN}  Creating agent user: $username${NC}"
         sudo docker exec $POSTGRES_CONTAINER psql -U $POSTGRES_USER -c "CREATE USER \"$username\" WITH PASSWORD '$password';" 2>/dev/null || echo "    User may already exist"
     done
     
-    echo -e "${GREEN}✅ Users created for $agent_name${NC}"
+    echo -e "${GREEN}✅ Agent-specific users created for $agent_name${NC}"
 }
 
-# Grant privileges for an agent
-grant_agent_privileges() {
-    local agent_name=$1
-    local main_db="${agent_name}_identus_db"
+# Create global users expected by Identus agents
+create_global_identus_users() {
+    echo -e "${YELLOW}👥 Creating global Identus application users...${NC}"
     
-    echo -e "${YELLOW}🔑 Granting privileges for $agent_name agent...${NC}"
+    # Define global users that all agents expect
+    local global_users=(
+        "pollux-application-user:pollux_pass"
+        "connect-application-user:connect_pass" 
+        "agent-application-user:agent_pass"
+    )
+    
+    for user_info in "${global_users[@]}"; do
+        local username="${user_info%:*}"
+        local password="${user_info#*:}"
+        
+        echo -e "${CYAN}  Creating global user: $username${NC}"
+        sudo docker exec $POSTGRES_CONTAINER psql -U $POSTGRES_USER -c "CREATE USER \"$username\" WITH PASSWORD '$password';" 2>/dev/null || echo "    User may already exist"
+    done
+    
+    echo -e "${GREEN}✅ Global Identus users created${NC}"
+}
+
+# Grant privileges for all users (global and agent-specific)
+grant_all_privileges() {
+    echo -e "${YELLOW}🔑 Granting privileges to all users on all databases...${NC}"
+    
+    # Grant privileges to global users on all databases
+    local global_users=("pollux-application-user" "connect-application-user" "agent-application-user")
+    local agents=("issuer" "holder" "verifier")
+    local databases=("pollux" "connect" "agent" "node_db" "identus_db")
+    
+    # Add agent-specific databases
+    for agent in "${agents[@]}"; do
+        databases+=("${agent}_identus_db")
+    done
+    
+    # Grant privileges to global users
+    for user in "${global_users[@]}"; do
+        for db in "${databases[@]}"; do
+            echo -e "${CYAN}  Granting privileges on $db to $user${NC}"
+            sudo docker exec $POSTGRES_CONTAINER psql -U $POSTGRES_USER -c "GRANT ALL PRIVILEGES ON DATABASE $db TO \"$user\";" 2>/dev/null || true
+        done
+    done
     
     # Grant privileges to agent-specific users
-    sudo docker exec $POSTGRES_CONTAINER psql -U $POSTGRES_USER -c "
-        -- Grant privileges on main database
-        GRANT ALL PRIVILEGES ON DATABASE $main_db TO \"${agent_name}-pollux-application-user\";
-        GRANT ALL PRIVILEGES ON DATABASE $main_db TO \"${agent_name}-connect-application-user\";
-        GRANT ALL PRIVILEGES ON DATABASE $main_db TO \"${agent_name}-agent-application-user\";
-        GRANT ALL PRIVILEGES ON DATABASE $main_db TO ${agent_name}_user;
-        
-        -- Grant privileges on Identus databases
-        GRANT ALL PRIVILEGES ON DATABASE pollux TO \"${agent_name}-pollux-application-user\";
-        GRANT ALL PRIVILEGES ON DATABASE connect TO \"${agent_name}-connect-application-user\";
-        GRANT ALL PRIVILEGES ON DATABASE agent TO \"${agent_name}-agent-application-user\";
-        GRANT ALL PRIVILEGES ON DATABASE node_db TO ${agent_name}_user;
-    " 2>/dev/null || true
+    for agent in "${agents[@]}"; do
+        local agent_user="${agent}_user"
+        for db in "${databases[@]}"; do
+            echo -e "${CYAN}  Granting privileges on $db to $agent_user${NC}"
+            sudo docker exec $POSTGRES_CONTAINER psql -U $POSTGRES_USER -c "GRANT ALL PRIVILEGES ON DATABASE $db TO \"$agent_user\";" 2>/dev/null || true
+        done
+    done
     
-    echo -e "${GREEN}✅ Privileges granted for $agent_name${NC}"
+    echo -e "${GREEN}✅ All privileges granted${NC}"
 }
 
 # Setup complete agent database configuration
 setup_agent_database() {
     local agent_name=$1
     
-    echo -e "${BLUE}🔧 Setting up complete database configuration for $agent_name...${NC}"
+    echo -e "${BLUE}🔧 Setting up database configuration for $agent_name...${NC}"
     
     create_agent_databases $agent_name
     create_agent_users $agent_name
-    grant_agent_privileges $agent_name
     
-    echo -e "${GREEN}✅ Complete database setup for $agent_name completed${NC}"
+    echo -e "${GREEN}✅ Database setup for $agent_name completed${NC}"
     echo ""
 }
 
@@ -193,6 +220,12 @@ main() {
             all_success=false
         fi
     done
+    
+    # Create global users that all agents expect
+    create_global_identus_users
+    
+    # Grant all privileges
+    grant_all_privileges
     
     echo ""
     if [ "$all_success" = true ]; then
