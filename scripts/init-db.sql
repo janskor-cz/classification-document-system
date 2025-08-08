@@ -364,12 +364,12 @@ INSERT INTO users (
     email, password_hash, enterprise_account_id, enterprise_account_name, 
     identity_hash, full_name, department, job_title, employee_id, has_enterprise_credential
 ) VALUES 
-    ('john.doe@company.com', '$2b$12$sample_hash_for_testing_only', 1, 'DEFAULT_ENTERPRISE', 
-     'sample_identity_hash_john_doe_12345678', 'John Doe', 'Engineering', 'Senior Developer', 'EMP-001', true),
-    ('jane.smith@company.com', '$2b$12$sample_hash_for_testing_only', 1, 'DEFAULT_ENTERPRISE', 
-     'sample_identity_hash_jane_smith_87654321', 'Jane Smith', 'Data Science', 'Data Scientist', 'EMP-002', true),
-    ('admin@company.com', '$2b$12$sample_hash_for_testing_only', 1, 'DEFAULT_ENTERPRISE', 
-     'sample_identity_hash_admin_user_11111111', 'Admin User', 'Administration', 'System Administrator', 'EMP-003', true)
+    ('john.doe@company.com', '$2b$12$GwEAkC3i0834N.6dljUiKuhmo/cKtvwF0dacvFF150GqdA4wSnJFu', 1, 'DEFAULT_ENTERPRISE', 
+     'f51bf4b4f472276b722dd7f3a0f1d24636985c862eac00012cf8560f0abbb7c2', 'John Doe', 'Engineering', 'Senior Developer', 'EMP-001', true),
+    ('jane.smith@company.com', '$2b$12$Y5HMuYyl8R07gIrd71h4U.tM4B9QHRsa28fFP9cqSDP9igy33vr3u', 1, 'DEFAULT_ENTERPRISE', 
+     '84f78145acd8b68994a4c054a28c011fd4044b4b70838e61456fb1ffb9e989b0', 'Jane Smith', 'Data Science', 'Data Scientist', 'EMP-002', true),
+    ('admin@company.com', '$2b$12$O5ZEfsAarLKp20pL5hcnhebpEMQo7LvKpD/r2Oa4M1lglX2KBBj42', 1, 'DEFAULT_ENTERPRISE', 
+     'd7e19308bf73560c2e20c1958a74dc36a7c20299047e4704671e49d1d0a84433', 'Admin User', 'Administration', 'System Administrator', 'EMP-003', true)
 ON CONFLICT (email) DO NOTHING;
 
 -- Insert sample credential requests

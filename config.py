@@ -226,8 +226,11 @@ class Config:
         self.database.echo_sql = True
         self.audit.log_level = "DEBUG"
         
-        # Use local Identus agents
-        self.identus.issuer_url = "http://localhost:8000/cloud-agent"
+        # Use PostgreSQL for development (consistent with working setup)
+        self.database.database_url = "postgresql://postgres:postgres@localhost:5432/identus_db"
+        
+        # Use local Identus agents  
+        self.identus.issuer_url = "http://localhost:8080/cloud-agent"
         self.identus.holder_url = "http://localhost:7000/cloud-agent"
         self.identus.verifier_url = "http://localhost:9000/cloud-agent"
     
