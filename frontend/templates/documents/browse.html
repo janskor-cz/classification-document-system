@@ -76,6 +76,51 @@
     .document-info.confidential {
         border-left-color: #dc3545;
     }
+    
+    /* Modal and Access Method Selection Styles (Phase 4.3) */
+    .text-purple {
+        color: #6f42c1 !important;
+    }
+    
+    .bg-purple {
+        background-color: #6f42c1 !important;
+    }
+    
+    .access-method-card {
+        cursor: pointer;
+        transition: all 0.3s ease;
+        border: 2px solid transparent;
+    }
+    
+    .access-method-card:hover {
+        border-color: #007bff;
+        transform: translateY(-2px);
+        box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+    }
+    
+    .access-method-card.selected {
+        border-color: #28a745;
+        background-color: #f8fff8;
+    }
+    
+    .access-method-card.selected .card-body {
+        background-color: transparent;
+    }
+    
+    .security-level-badge {
+        margin-top: 15px;
+    }
+    
+    .modal-body .table th {
+        border-top: none;
+    }
+    
+    .modal-document-info {
+        background-color: #f8f9fa;
+        border-radius: 8px;
+        padding: 15px;
+        border-left: 4px solid #007bff;
+    }
 </style>
 {% endblock %}
 
@@ -183,29 +228,42 @@
                 <!-- Access Actions -->
                 <div class="mt-auto">
                     {% if document.can_access %}
-                        <div class="d-flex gap-2 mb-2">
-                            <!-- Standard Access -->
-                            <button class="btn btn-outline-primary btn-sm flex-fill" 
-                                    onclick="accessDocument({{ document.id }}, 'standard')"
-                                    title="Standard document access">
-                                <i class="fas fa-download me-1"></i>Standard Access
-                            </button>
-                            
-                            <!-- Enhanced Secure Access Button (Task 3.3 requirement) -->
-                            <button class="btn secure-access-btn btn-sm flex-fill" 
-                                    onclick="accessDocument({{ document.id }}, 'ephemeral')"
-                                    title="Secure ephemeral DID-based access with perfect forward secrecy">
-                                <i class="fas fa-shield-alt me-1"></i>Secure Access
-                            </button>
+                        <!-- Dynamic Access Method Selection (Phase 4.2) -->
+                        <div id="access-methods-{{ document.id }}" class="access-methods-container mb-2">
+                            <!-- Loading state -->
+                            <div class="text-center p-2">
+                                <div class="spinner-border spinner-border-sm" role="status">
+                                    <span class="visually-hidden">Loading access methods...</span>
+                                </div>
+                            </div>
                         </div>
                         
-                        <!-- Security Level Indicators -->
-                        <div class="security-indicator">
-                            <div class="security-level-standard me-3">
-                                <i class="fas fa-circle me-1"></i>Standard
+                        <!-- Fallback Access Buttons (shown while loading) -->
+                        <div id="fallback-access-{{ document.id }}" class="d-none">
+                            <div class="d-flex gap-2 mb-2">
+                                <!-- Standard Access -->
+                                <button class="btn btn-outline-primary btn-sm flex-fill" 
+                                        onclick="accessDocument({{ document.id }}, 'standard')"
+                                        title="Standard document access">
+                                    <i class="fas fa-download me-1"></i>Standard Access
+                                </button>
+                                
+                                <!-- Enhanced Secure Access Button -->
+                                <button class="btn secure-access-btn btn-sm flex-fill" 
+                                        onclick="accessDocument({{ document.id }}, 'ephemeral')"
+                                        title="Secure ephemeral DID-based access with perfect forward secrecy">
+                                    <i class="fas fa-shield-alt me-1"></i>Secure Access
+                                </button>
                             </div>
-                            <div class="security-level-ephemeral">
-                                <i class="fas fa-circle me-1"></i>Ephemeral DID
+                            
+                            <!-- Security Level Indicators -->
+                            <div class="security-indicator">
+                                <div class="security-level-standard me-3">
+                                    <i class="fas fa-circle me-1"></i>Standard
+                                </div>
+                                <div class="security-level-ephemeral">
+                                    <i class="fas fa-circle me-1"></i>Ephemeral DID
+                                </div>
                             </div>
                         </div>
                         
@@ -270,17 +328,350 @@
 </div>
 {% endif %}
 
+<!-- Access Method Selection Modal (Phase 4.3) -->
+<div class="modal fade" id="accessMethodModal" tabindex="-1" aria-labelledby="accessMethodModalLabel" aria-hidden="true">
+    <div class="modal-dialog modal-lg">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title" id="accessMethodModalLabel">
+                    <i class="fas fa-shield-alt me-2"></i>Choose Access Method
+                </h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body">
+                <div id="modal-document-info" class="mb-4">
+                    <!-- Document info will be populated here -->
+                </div>
+                
+                <div class="row" id="access-method-options">
+                    <!-- Standard Access Option -->
+                    <div class="col-md-6 mb-3">
+                        <div class="card access-method-card" data-method="standard">
+                            <div class="card-body text-center">
+                                <i class="fas fa-download fa-3x text-primary mb-3"></i>
+                                <h5 class="card-title">Standard Access</h5>
+                                <p class="card-text text-muted">Direct document download with standard security</p>
+                                <ul class="list-unstyled small text-start">
+                                    <li><i class="fas fa-check text-success me-2"></i>Immediate download</li>
+                                    <li><i class="fas fa-check text-success me-2"></i>Standard encryption in transit</li>
+                                    <li><i class="fas fa-check text-success me-2"></i>Audit logging</li>
+                                </ul>
+                                <div class="security-level-badge">
+                                    <span class="badge bg-success">Standard Security</span>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <!-- Ephemeral Access Option -->
+                    <div class="col-md-6 mb-3">
+                        <div class="card access-method-card" data-method="ephemeral">
+                            <div class="card-body text-center">
+                                <i class="fas fa-shield-alt fa-3x text-purple mb-3"></i>
+                                <h5 class="card-title">Ephemeral DID Access</h5>
+                                <p class="card-text text-muted">Secure access with ephemeral DID encryption and perfect forward secrecy</p>
+                                <ul class="list-unstyled small text-start">
+                                    <li><i class="fas fa-check text-success me-2"></i>Client-side key generation</li>
+                                    <li><i class="fas fa-check text-success me-2"></i>Perfect forward secrecy</li>
+                                    <li><i class="fas fa-check text-success me-2"></i>Automatic key destruction</li>
+                                    <li><i class="fas fa-check text-success me-2"></i>Session-based access</li>
+                                </ul>
+                                <div class="security-level-badge">
+                                    <span class="badge bg-purple">High Security</span>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                
+                <!-- Access Method Comparison -->
+                <div class="mt-4">
+                    <h6 class="mb-3">Security Comparison</h6>
+                    <div class="table-responsive">
+                        <table class="table table-sm">
+                            <thead>
+                                <tr>
+                                    <th>Feature</th>
+                                    <th class="text-center">Standard</th>
+                                    <th class="text-center">Ephemeral DID</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                <tr>
+                                    <td>Encryption in Transit</td>
+                                    <td class="text-center"><i class="fas fa-check text-success"></i></td>
+                                    <td class="text-center"><i class="fas fa-check text-success"></i></td>
+                                </tr>
+                                <tr>
+                                    <td>Perfect Forward Secrecy</td>
+                                    <td class="text-center"><i class="fas fa-times text-muted"></i></td>
+                                    <td class="text-center"><i class="fas fa-check text-success"></i></td>
+                                </tr>
+                                <tr>
+                                    <td>Client-side Key Management</td>
+                                    <td class="text-center"><i class="fas fa-times text-muted"></i></td>
+                                    <td class="text-center"><i class="fas fa-check text-success"></i></td>
+                                </tr>
+                                <tr>
+                                    <td>Automatic Key Destruction</td>
+                                    <td class="text-center"><i class="fas fa-times text-muted"></i></td>
+                                    <td class="text-center"><i class="fas fa-check text-success"></i></td>
+                                </tr>
+                                <tr>
+                                    <td>Setup Time</td>
+                                    <td class="text-center">Instant</td>
+                                    <td class="text-center">~2-3 seconds</td>
+                                </tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+                
+                <!-- Selected Method Info -->
+                <div class="alert alert-info mt-3" id="selected-method-info" style="display: none;">
+                    <h6 class="alert-heading">
+                        <i class="fas fa-info-circle me-1"></i>Selected Method: <span id="selected-method-name"></span>
+                    </h6>
+                    <p class="mb-0" id="selected-method-description"></p>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">
+                    <i class="fas fa-times me-2"></i>Cancel
+                </button>
+                <button type="button" class="btn btn-primary" id="confirm-access-method" disabled>
+                    <i class="fas fa-arrow-right me-2"></i>Proceed with Selected Method
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+
 {% endblock %}
 
 {% block extra_js %}
 <script>
 /**
+ * Load dynamic access methods for each document (Phase 4.2)
+ */
+async function loadAccessMethods(documentId) {
+    try {
+        const response = await fetch(`/api/documents/access-methods/${documentId}`);
+        const data = await response.json();
+        
+        const container = document.getElementById(`access-methods-${documentId}`);
+        const fallback = document.getElementById(`fallback-access-${documentId}`);
+        
+        if (data.success && data.access_methods) {
+            // Create dynamic access method buttons
+            const accessMethods = data.access_methods;
+            let buttonsHtml = '<div class="d-flex gap-2 mb-2">';
+            
+            // Enhanced Access Method Selection (Phase 4.3)
+            buttonsHtml += `
+                <button class="btn btn-primary btn-sm flex-fill" 
+                        onclick="showAccessMethodModal(${documentId})"
+                        title="Choose between standard or ephemeral DID access methods">
+                    <i class="fas fa-shield-alt me-1"></i>Choose Access Method
+                </button>
+            `;
+            
+            // Quick Access Buttons (Alternative)
+            if (accessMethods.standard && accessMethods.standard.available) {
+                buttonsHtml += `
+                    <button class="btn btn-outline-secondary btn-sm" 
+                            onclick="accessDocument(${documentId}, 'standard')"
+                            title="Quick ${accessMethods.standard.description}"
+                            style="margin-left: 5px;">
+                        <i class="${accessMethods.standard.icon}"></i>
+                    </button>
+                `;
+            }
+            
+            if (accessMethods.ephemeral && accessMethods.ephemeral.available) {
+                buttonsHtml += `
+                    <button class="btn btn-outline-secondary btn-sm" 
+                            onclick="prepareEphemeralAccess(${documentId})"
+                            title="Quick ${accessMethods.ephemeral.description}"
+                            style="margin-left: 5px;">
+                        <i class="${accessMethods.ephemeral.icon}"></i>
+                    </button>
+                `;
+            }
+            
+            buttonsHtml += '</div>';
+            
+            // Add security level indicators
+            buttonsHtml += `
+                <div class="security-indicator">
+                    <div class="security-level-standard me-3">
+                        <i class="fas fa-circle me-1"></i>Standard (${accessMethods.standard.security_level})
+                    </div>
+                    <div class="security-level-ephemeral">
+                        <i class="fas fa-circle me-1"></i>Ephemeral (${accessMethods.ephemeral.security_level})
+                    </div>
+                </div>
+            `;
+            
+            // Add ephemeral features info if available
+            if (accessMethods.ephemeral && accessMethods.ephemeral.features) {
+                buttonsHtml += `
+                    <div class="ephemeral-features mt-2">
+                        <small class="text-muted">
+                            <i class="fas fa-info-circle me-1"></i>
+                            Ephemeral features: ${accessMethods.ephemeral.features.join(', ')}
+                        </small>
+                    </div>
+                `;
+            }
+            
+            container.innerHTML = buttonsHtml;
+        } else {
+            // Fall back to static buttons
+            container.classList.add('d-none');
+            fallback.classList.remove('d-none');
+        }
+    } catch (error) {
+        console.error('Failed to load access methods:', error);
+        // Fall back to static buttons
+        const container = document.getElementById(`access-methods-${documentId}`);
+        const fallback = document.getElementById(`fallback-access-${documentId}`);
+        container.classList.add('d-none');
+        fallback.classList.remove('d-none');
+    }
+}
+
+/**
+ * Show access method selection modal (Phase 4.3)
+ */
+function showAccessMethodModal(documentId) {
+    currentDocumentId = documentId;
+    
+    // Load document info and populate modal
+    fetch(`/api/documents/access-methods/${documentId}`)
+        .then(response => response.json())
+        .then(data => {
+            if (data.success) {
+                populateModalWithDocumentInfo(data.document, data.access_methods);
+                const modal = new bootstrap.Modal(document.getElementById('accessMethodModal'));
+                modal.show();
+            } else {
+                console.error('Failed to load document info for modal');
+                // Fallback to direct access
+                accessDocument(documentId, 'standard');
+            }
+        })
+        .catch(error => {
+            console.error('Error loading document info:', error);
+            // Fallback to direct access
+            accessDocument(documentId, 'standard');
+        });
+}
+
+/**
+ * Populate modal with document information
+ */
+function populateModalWithDocumentInfo(document, accessMethods) {
+    const modalDocInfo = document.getElementById('modal-document-info');
+    
+    // Create document info display
+    const documentInfoHtml = `
+        <div class="modal-document-info">
+            <h6 class="mb-2">
+                <i class="fas fa-file-alt me-2"></i>${document.filename}
+            </h6>
+            <div class="row">
+                <div class="col-md-6">
+                    <small class="text-muted">
+                        <strong>Title:</strong> ${document.title || 'N/A'}<br>
+                        <strong>Classification:</strong> ${document.classification_level_name} (Level ${document.classification_level})<br>
+                        <strong>Size:</strong> ${formatFileSize(document.size)}
+                    </small>
+                </div>
+                <div class="col-md-6">
+                    <small class="text-muted">
+                        <strong>Created:</strong> ${formatDate(document.created_at)}<br>
+                        <strong>Created by:</strong> ${document.created_by_name || 'Unknown'}<br>
+                        <strong>Access Status:</strong> <span class="text-success">Granted</span>
+                    </small>
+                </div>
+            </div>
+        </div>
+    `;
+    
+    modalDocInfo.innerHTML = documentInfoHtml;
+    
+    // Update access method availability in modal
+    updateModalAccessMethods(accessMethods);
+}
+
+/**
+ * Update modal access methods based on API response
+ */
+function updateModalAccessMethods(accessMethods) {
+    const standardCard = document.querySelector('.access-method-card[data-method="standard"]');
+    const ephemeralCard = document.querySelector('.access-method-card[data-method="ephemeral"]');
+    
+    // Enable/disable cards based on availability
+    if (!accessMethods.standard || !accessMethods.standard.available) {
+        standardCard.classList.add('disabled');
+        standardCard.style.opacity = '0.5';
+        standardCard.style.pointerEvents = 'none';
+    }
+    
+    if (!accessMethods.ephemeral || !accessMethods.ephemeral.available) {
+        ephemeralCard.classList.add('disabled');
+        ephemeralCard.style.opacity = '0.5';
+        ephemeralCard.style.pointerEvents = 'none';
+    }
+}
+
+/**
+ * Prepare ephemeral access for document (Phase 4.2)
+ */
+async function prepareEphemeralAccess(documentId) {
+    try {
+        const button = event.target;
+        const originalHtml = button.innerHTML;
+        
+        // Show loading state
+        button.innerHTML = '<i class="fas fa-spinner fa-spin me-1"></i>Preparing...';
+        button.disabled = true;
+        
+        const response = await fetch(`/api/documents/prepare-ephemeral/${documentId}`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({
+                access_type: 'ephemeral'
+            })
+        });
+        
+        const data = await response.json();
+        
+        if (data.success) {
+            // Redirect to ephemeral access page
+            window.location.href = `/documents/request-ephemeral-access/${documentId}`;
+        } else {
+            alert(`Failed to prepare ephemeral access: ${data.error || 'Unknown error'}`);
+            button.innerHTML = originalHtml;
+            button.disabled = false;
+        }
+    } catch (error) {
+        console.error('Failed to prepare ephemeral access:', error);
+        alert('Failed to prepare ephemeral access. Please try again.');
+        button.innerHTML = originalHtml;
+        button.disabled = false;
+    }
+}
+
+/**
  * Access document with specified method
  */
 function accessDocument(documentId, method) {
     if (method === 'ephemeral') {
-        // Redirect to ephemeral access page (Task 3.3 integration)
-        window.location.href = `/documents/request-ephemeral-access/${documentId}`;
+        prepareEphemeralAccess(documentId);
     } else {
         // Standard access - could implement direct download
         alert('Standard document access - Feature to be implemented');
@@ -288,7 +679,98 @@ function accessDocument(documentId, method) {
     }
 }
 
-// Add tooltips to security indicators
+// Global variables for modal functionality
+let currentDocumentId = null;
+let selectedAccessMethod = null;
+
+/**
+ * Utility functions
+ */
+function formatFileSize(bytes) {
+    if (!bytes) return 'Unknown';
+    const sizes = ['Bytes', 'KB', 'MB', 'GB'];
+    const i = Math.floor(Math.log(bytes) / Math.log(1024));
+    return Math.round(bytes / Math.pow(1024, i) * 100) / 100 + ' ' + sizes[i];
+}
+
+function formatDate(dateString) {
+    if (!dateString) return 'Unknown';
+    return new Date(dateString).toLocaleDateString();
+}
+
+/**
+ * Modal event handlers
+ */
+function handleAccessMethodSelection() {
+    const cards = document.querySelectorAll('.access-method-card');
+    const confirmButton = document.getElementById('confirm-access-method');
+    const selectedInfo = document.getElementById('selected-method-info');
+    const selectedMethodName = document.getElementById('selected-method-name');
+    const selectedMethodDescription = document.getElementById('selected-method-description');
+    
+    cards.forEach(card => {
+        if (!card.classList.contains('disabled')) {
+            card.addEventListener('click', function() {
+                // Remove previous selections
+                cards.forEach(c => c.classList.remove('selected'));
+                
+                // Select this card
+                this.classList.add('selected');
+                selectedAccessMethod = this.dataset.method;
+                
+                // Update selected method info
+                const method = selectedAccessMethod;
+                const methodInfo = {
+                    'standard': {
+                        name: 'Standard Access',
+                        description: 'Direct document download with standard security measures and audit logging.'
+                    },
+                    'ephemeral': {
+                        name: 'Ephemeral DID Access',
+                        description: 'Advanced secure access using ephemeral DID encryption with perfect forward secrecy and automatic key destruction.'
+                    }
+                };
+                
+                selectedMethodName.textContent = methodInfo[method].name;
+                selectedMethodDescription.textContent = methodInfo[method].description;
+                selectedInfo.style.display = 'block';
+                
+                // Enable confirm button
+                confirmButton.disabled = false;
+                confirmButton.innerHTML = `
+                    <i class="fas fa-arrow-right me-2"></i>Proceed with ${methodInfo[method].name}
+                `;
+            });
+        }
+    });
+    
+    // Handle confirm button
+    confirmButton.addEventListener('click', function() {
+        if (selectedAccessMethod && currentDocumentId) {
+            const modal = bootstrap.Modal.getInstance(document.getElementById('accessMethodModal'));
+            modal.hide();
+            
+            // Proceed with selected access method
+            if (selectedAccessMethod === 'ephemeral') {
+                prepareEphemeralAccess(currentDocumentId);
+            } else {
+                accessDocument(currentDocumentId, selectedAccessMethod);
+            }
+        }
+    });
+    
+    // Reset modal when hidden
+    document.getElementById('accessMethodModal').addEventListener('hidden.bs.modal', function() {
+        cards.forEach(c => c.classList.remove('selected'));
+        selectedAccessMethod = null;
+        currentDocumentId = null;
+        confirmButton.disabled = true;
+        confirmButton.innerHTML = '<i class="fas fa-arrow-right me-2"></i>Proceed with Selected Method';
+        selectedInfo.style.display = 'none';
+    });
+}
+
+// Load access methods for all documents on page load
 document.addEventListener('DOMContentLoaded', function() {
     // Initialize Bootstrap tooltips if available
     if (typeof bootstrap !== 'undefined' && bootstrap.Tooltip) {
@@ -297,6 +779,16 @@ document.addEventListener('DOMContentLoaded', function() {
             return new bootstrap.Tooltip(tooltipTriggerEl);
         });
     }
+    
+    // Initialize modal functionality
+    handleAccessMethodSelection();
+    
+    // Load access methods for each document
+    const documentCards = document.querySelectorAll('[id^="access-methods-"]');
+    documentCards.forEach(container => {
+        const documentId = container.id.replace('access-methods-', '');
+        loadAccessMethods(parseInt(documentId));
+    });
 });
 </script>
 {% endblock %}

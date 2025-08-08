@@ -169,7 +169,8 @@
       "Bash(pip install:*)",
       "Bash(python3:*)",
       "Bash(pkill:*)",
-      "Bash(mkdir:*)"
+      "Bash(mkdir:*)",
+      "Bash(python:*)"
     ],
     "deny": []
   }

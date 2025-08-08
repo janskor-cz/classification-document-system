@@ -90,6 +90,62 @@
                                   placeholder="Optional description"></textarea>
                     </div>
 
+                    <!-- Enhanced Document Processing Options (Phase 4.2) -->
+                    <div class="mb-4">
+                        <h6 class="mb-3">
+                            <i class="fas fa-shield-alt me-2"></i>Security & Access Options
+                        </h6>
+                        
+                        <!-- Immediate Encryption Option -->
+                        <div class="form-check mb-3">
+                            <input class="form-check-input" type="checkbox" value="" 
+                                   id="encrypt_immediately" name="encrypt_immediately">
+                            <label class="form-check-label" for="encrypt_immediately">
+                                <i class="fas fa-lock me-1"></i>
+                                <strong>Encrypt Immediately</strong>
+                                <br>
+                                <small class="text-muted">Encrypt document immediately upon upload for enhanced security</small>
+                            </label>
+                        </div>
+                        
+                        <!-- Ephemeral Access Support -->
+                        <div class="form-check mb-3">
+                            <input class="form-check-input" type="checkbox" value="" 
+                                   id="enable_ephemeral_access" name="enable_ephemeral_access">
+                            <label class="form-check-label" for="enable_ephemeral_access">
+                                <i class="fas fa-eye-slash me-1"></i>
+                                <strong>Enable Ephemeral DID Access</strong>
+                                <br>
+                                <small class="text-muted">Allow secure ephemeral DID-based access with perfect forward secrecy</small>
+                            </label>
+                        </div>
+                        
+                        <!-- Default Secure Access -->
+                        <div class="form-check mb-3">
+                            <input class="form-check-input" type="checkbox" value="" 
+                                   id="ephemeral_access_default" name="ephemeral_access_default">
+                            <label class="form-check-label" for="ephemeral_access_default">
+                                <i class="fas fa-shield-alt me-1"></i>
+                                <strong>Default to Ephemeral Access</strong>
+                                <br>
+                                <small class="text-muted">Make ephemeral DID access the default method for this document</small>
+                            </label>
+                        </div>
+                        
+                        <!-- Security Features Info -->
+                        <div class="alert alert-info mt-3">
+                            <h6 class="alert-heading">
+                                <i class="fas fa-info-circle me-1"></i>Ephemeral DID Features
+                            </h6>
+                            <ul class="mb-0 small">
+                                <li><strong>Client-side Key Generation:</strong> Keys generated in the browser for maximum security</li>
+                                <li><strong>Perfect Forward Secrecy:</strong> Past sessions remain secure even if keys are compromised</li>
+                                <li><strong>Automatic Key Destruction:</strong> Keys automatically destroyed after session ends</li>
+                                <li><strong>Session-based Access:</strong> Each access creates a unique secure session</li>
+                            </ul>
+                        </div>
+                    </div>
+
                     <div class="d-grid gap-2 d-md-flex justify-content-md-end">
                         <a href="{{ url_for('dashboard') }}" class="btn btn-outline-secondary">
                             <i class="fas fa-times me-2"></i>Cancel
@@ -139,4 +195,79 @@
         </div>
     </div>
 </div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+// Enhanced Document Processing Form Logic (Phase 4.2)
+document.addEventListener('DOMContentLoaded', function() {
+    const encryptImmediately = document.getElementById('encrypt_immediately');
+    const enableEphemeralAccess = document.getElementById('enable_ephemeral_access');
+    const ephemeralAccessDefault = document.getElementById('ephemeral_access_default');
+    
+    // Enable/disable ephemeral default based on ephemeral access enablement
+    function updateEphemeralOptions() {
+        if (enableEphemeralAccess.checked) {
+            ephemeralAccessDefault.disabled = false;
+            ephemeralAccessDefault.parentElement.classList.remove('text-muted');
+        } else {
+            ephemeralAccessDefault.disabled = true;
+            ephemeralAccessDefault.checked = false;
+            ephemeralAccessDefault.parentElement.classList.add('text-muted');
+        }
+    }
+    
+    // Update form validation and display
+    function updateFormState() {
+        updateEphemeralOptions();
+        
+        // Show additional security info when encryption is enabled
+        const securityAlert = document.querySelector('.alert-info');
+        if (encryptImmediately.checked || enableEphemeralAccess.checked) {
+            securityAlert.classList.remove('d-none');
+        }
+        
+        // Update button text based on selected options
+        const submitBtn = document.querySelector('button[type="submit"]');
+        let buttonText = '<i class="fas fa-upload me-2"></i>';
+        
+        if (encryptImmediately.checked && enableEphemeralAccess.checked) {
+            buttonText += 'Upload & Secure (Encrypted + Ephemeral)';
+        } else if (encryptImmediately.checked) {
+            buttonText += 'Upload & Encrypt';
+        } else if (enableEphemeralAccess.checked) {
+            buttonText += 'Upload & Enable Ephemeral Access';
+        } else {
+            buttonText += 'Upload & Classify';
+        }
+        
+        submitBtn.innerHTML = buttonText;
+    }
+    
+    // Add event listeners
+    enableEphemeralAccess.addEventListener('change', updateFormState);
+    encryptImmediately.addEventListener('change', updateFormState);
+    ephemeralAccessDefault.addEventListener('change', updateFormState);
+    
+    // Initial state
+    updateFormState();
+    
+    // Form submission validation
+    document.querySelector('form').addEventListener('submit', function(e) {
+        // Validate that ephemeral default is only selected when ephemeral access is enabled
+        if (ephemeralAccessDefault.checked && !enableEphemeralAccess.checked) {
+            e.preventDefault();
+            alert('Please enable Ephemeral DID Access before setting it as default.');
+            return false;
+        }
+        
+        // Show processing message for enhanced uploads
+        if (encryptImmediately.checked || enableEphemeralAccess.checked) {
+            const submitBtn = document.querySelector('button[type="submit"]');
+            submitBtn.innerHTML = '<i class="fas fa-spinner fa-spin me-2"></i>Processing secure upload...';
+            submitBtn.disabled = true;
+        }
+    });
+});
+</script>
 {% endblock %}
