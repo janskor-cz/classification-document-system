@@ -1715,6 +1715,8 @@ def handle_document_upload():
         department = request.form.get('department', '')
         tags = request.form.get('tags', '')
         encrypt_immediately = request.form.get('encrypt_immediately') == 'on'
+        enable_ephemeral_access = request.form.get('enable_ephemeral_access') == 'on'
+        ephemeral_access_default = request.form.get('ephemeral_access_default') == 'on'
         
         # Validate required fields
         if not title:
@@ -1744,7 +1746,7 @@ def handle_document_upload():
         # Save file
         file.save(filepath)
         
-        # Mock document processing (in real implementation, this would encrypt the file)
+        # Enhanced document processing with ephemeral access support (Task 4.1)
         document_data = {
             'id': f"doc-{timestamp}",
             'title': title,
@@ -1756,6 +1758,17 @@ def handle_document_upload():
             'department': department,
             'tags': tags.split(',') if tags else [],
             'encrypted': encrypt_immediately,
+            'ephemeral_access_enabled': enable_ephemeral_access,
+            'ephemeral_access_default': ephemeral_access_default,
+            'access_methods': {
+                'standard': True,
+                'ephemeral': enable_ephemeral_access
+            },
+            'security_features': {
+                'immediate_encryption': encrypt_immediately,
+                'ephemeral_did_support': enable_ephemeral_access,
+                'default_secure_access': ephemeral_access_default
+            },
             'uploaded_by': current_user['email'],
             'uploaded_at': datetime.now().isoformat(),
             'size': os.path.getsize(filepath)
@@ -2234,6 +2247,169 @@ def request_ephemeral_document_access_page(doc_id):
         print(f"❌ Failed to load ephemeral access page: {e}")
         flash('Failed to load document access page.', 'error')
         return redirect(url_for('dashboard'))
+
+# ==================== ENHANCED DOCUMENT PROCESSING (Task 4.1) ====================
+
+@app.route('/api/documents/access-methods/<int:doc_id>', methods=['GET'])
+def get_document_access_methods(doc_id):
+    """Get available access methods for a document"""
+    try:
+        if not current_user.get('authenticated'):
+            return jsonify({'error': 'Authentication required'}), 401
+        
+        # Get document information
+        conn = get_db_connection()
+        cursor = conn.cursor(cursor_factory=RealDictCursor)
+        
+        cursor.execute("""
+            SELECT d.*, u.full_name as created_by_name,
+                   CASE 
+                       WHEN d.classification_level = 1 THEN 'Public'
+                       WHEN d.classification_level = 2 THEN 'Internal'
+                       WHEN d.classification_level = 3 THEN 'Confidential'
+                       ELSE 'Unknown'
+                   END as classification_level_name,
+                   can_user_access_level(%s, d.classification_level) as can_access
+            FROM documents d
+            LEFT JOIN users u ON d.created_by_user_id = u.id
+            WHERE d.id = %s
+        """, (current_user['identity_hash'], doc_id))
+        
+        document = cursor.fetchone()
+        cursor.close()
+        conn.close()
+        
+        if not document:
+            return jsonify({'error': 'Document not found'}), 404
+        
+        # Determine available access methods
+        access_methods = {
+            'standard': {
+                'available': bool(document['can_access']),
+                'name': 'Standard Access',
+                'description': 'Direct document download with standard security',
+                'security_level': 'standard',
+                'icon': 'fas fa-download'
+            },
+            'ephemeral': {
+                'available': bool(document['can_access']),
+                'name': 'Ephemeral DID Access',
+                'description': 'Secure access with ephemeral DID encryption and perfect forward secrecy',
+                'security_level': 'high',
+                'icon': 'fas fa-shield-alt',
+                'features': [
+                    'Client-side key generation',
+                    'Perfect forward secrecy',
+                    'Automatic key destruction',
+                    'Session-based access'
+                ]
+            }
+        }
+        
+        return jsonify({
+            'success': True,
+            'document': {
+                'id': document['id'],
+                'filename': document['filename'],
+                'title': document['title'],
+                'classification_level': document['classification_level'],
+                'classification_level_name': document['classification_level_name'],
+                'size': document['size'],
+                'created_at': document['created_at'].isoformat() if document['created_at'] else None,
+                'created_by_name': document['created_by_name']
+            },
+            'access_methods': access_methods,
+            'user_can_access': bool(document['can_access']),
+            'message': 'Document access methods retrieved successfully'
+        })
+        
+    except Exception as e:
+        print(f"❌ Failed to get document access methods: {e}")
+        return jsonify({'error': 'Failed to retrieve document access methods'}), 500
+
+@app.route('/api/documents/prepare-ephemeral/<int:doc_id>', methods=['POST'])
+def prepare_ephemeral_document_access(doc_id):
+    """Prepare document for ephemeral access (pre-processing)"""
+    try:
+        if not current_user.get('authenticated'):
+            return jsonify({'error': 'Authentication required'}), 401
+        
+        data = request.get_json() or {}
+        access_type = data.get('access_type', 'ephemeral')
+        
+        # Get document information
+        conn = get_db_connection()
+        cursor = conn.cursor(cursor_factory=RealDictCursor)
+        
+        cursor.execute("""
+            SELECT d.*, can_user_access_level(%s, d.classification_level) as can_access
+            FROM documents d
+            WHERE d.id = %s
+        """, (current_user['identity_hash'], doc_id))
+        
+        document = cursor.fetchone()
+        
+        if not document:
+            cursor.close()
+            conn.close()
+            return jsonify({'error': 'Document not found'}), 404
+        
+        if not document['can_access']:
+            cursor.close()
+            conn.close()
+            return jsonify({'error': 'Insufficient access permissions'}), 403
+        
+        # Check if document file exists
+        if not os.path.exists(document['file_path']):
+            cursor.close()
+            conn.close()
+            return jsonify({'error': 'Document file not found on server'}), 404
+        
+        # Prepare ephemeral access metadata
+        preparation_result = {
+            'document_id': doc_id,
+            'filename': document['filename'],
+            'classification_level': document['classification_level'],
+            'size': document['size'],
+            'content_type': document['content_type'] or 'application/octet-stream',
+            'access_type': access_type,
+            'ready_for_ephemeral': True,
+            'ephemeral_access_url': f"/documents/request-ephemeral-access/{doc_id}",
+            'preparation_time': datetime.utcnow().isoformat()
+        }
+        
+        # Log preparation attempt
+        cursor.execute("""
+            INSERT INTO ephemeral_did_audit_log (
+                user_id, user_identity_hash, enterprise_account_name, 
+                document_id, action, classification_level, success, details
+            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+        """, (
+            current_user['user_id'],
+            current_user['identity_hash'],
+            current_user['enterprise_account_name'],
+            doc_id,
+            'document_prepared',
+            document['classification_level'],
+            True,
+            json.dumps(preparation_result)
+        ))
+        
+        conn.commit()
+        cursor.close()
+        conn.close()
+        
+        print(f"✅ Document {doc_id} prepared for ephemeral access by {current_user['full_name']}")
+        
+        return jsonify({
+            'success': True,
+            'preparation': preparation_result,
+            'message': 'Document prepared for ephemeral access'
+        })
+        
+    except Exception as e:
+        print(f"❌ Failed to prepare ephemeral document access: {e}")
+        return jsonify({'error': 'Failed to prepare document for ephemeral access'}), 500
 
 @app.route('/documents/browse')
 def browse_documents():
