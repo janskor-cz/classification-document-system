@@ -24,6 +24,8 @@ from config import get_config, get_flask_config
 from identus_wrapper import identus_client
 from document_encryption import ephemeral_encryption, encrypt_document_for_ephemeral_session
 from classification_manager import ClassificationManager
+from ephemeral_session_manager import EphemeralSessionManager
+from security_validator import EphemeralDIDSecurityValidator
 
 # Initialize Flask app
 app = Flask(__name__, 
@@ -36,6 +38,10 @@ app.config.update(get_flask_config())
 
 # Initialize classification manager with ephemeral DID support (Task 4.2)
 classification_manager = ClassificationManager(config)
+
+# Initialize ephemeral session manager and security validator (Task 5.1 & 5.2)
+session_manager = EphemeralSessionManager(config)
+security_validator = EphemeralDIDSecurityValidator(config)
 
 # Enable CORS
 CORS(app)
@@ -1071,7 +1077,7 @@ def get_enterprise_accounts():
             conn.close()
 
 @app.route('/api/user/max-classification-level', methods=['GET'])
-def get_user_max_classification_level():
+def get_user_max_classification_level_api():
     """Get user's current maximum classification level"""
     try:
         if not current_user.get('is_authenticated'):
@@ -2148,6 +2154,298 @@ def cleanup_expired_sessions():
         
     except Exception as e:
         print(f"❌ Error cleaning up expired sessions: {e}")
+        traceback.print_exc()
+        return jsonify({'error': 'Internal server error'}), 500
+
+# ==================== EPHEMERAL SESSION MANAGEMENT API (Task 5.1) ====================
+
+@app.route('/api/sessions/ephemeral/create', methods=['POST'])
+def create_ephemeral_session():
+    """Create a new ephemeral session for document access (Task 5.1)"""
+    try:
+        # Check user authentication
+        if not current_user.get('is_authenticated'):
+            return jsonify({'error': 'Authentication required'}), 401
+        
+        data = request.get_json()
+        if not data:
+            return jsonify({'error': 'JSON data required'}), 400
+        
+        document_id = data.get('document_id')
+        ephemeral_did = data.get('ephemeral_did')
+        ephemeral_public_key = data.get('ephemeral_public_key')
+        session_duration_minutes = data.get('session_duration_minutes', 60)
+        metadata = data.get('metadata', {})
+        
+        if not all([document_id, ephemeral_did, ephemeral_public_key]):
+            return jsonify({'error': 'Missing required fields: document_id, ephemeral_did, ephemeral_public_key'}), 400
+        
+        # Security validation first
+        security_check = security_validator.validate_ephemeral_did_authenticity(
+            ephemeral_did, ephemeral_public_key, current_user.get('identity_hash')
+        )
+        
+        if not security_check.get('valid', False):
+            return jsonify({
+                'error': 'Ephemeral DID security validation failed',
+                'validation_details': security_check
+            }), 400
+        
+        # Check for DID reuse
+        reuse_check = security_validator.detect_ephemeral_did_reuse(
+            ephemeral_did, current_user.get('identity_hash')
+        )
+        
+        if reuse_check.get('reuse_detected', False):
+            reuse_analysis = reuse_check.get('reuse_analysis', {})
+            if reuse_analysis.get('cross_user_reuse', False):
+                return jsonify({
+                    'error': 'Ephemeral DID reuse detected - security violation',
+                    'reuse_details': reuse_check
+                }), 403
+        
+        # Create the session
+        session_duration = timedelta(minutes=session_duration_minutes)
+        creation_result = session_manager.create_ephemeral_session(
+            current_user.get('identity_hash'),
+            document_id,
+            ephemeral_did,
+            ephemeral_public_key,
+            session_duration,
+            metadata
+        )
+        
+        return jsonify(creation_result)
+        
+    except Exception as e:
+        print(f"❌ Error creating ephemeral session: {e}")
+        traceback.print_exc()
+        return jsonify({'error': 'Internal server error'}), 500
+
+@app.route('/api/sessions/ephemeral/validate/<session_token>', methods=['GET'])
+def validate_ephemeral_session_api(session_token):
+    """Validate an ephemeral session (Task 5.1)"""
+    try:
+        # Check user authentication
+        if not current_user.get('is_authenticated'):
+            return jsonify({'error': 'Authentication required'}), 401
+        
+        # Validate the session
+        validation_result = session_manager.validate_ephemeral_session(
+            session_token,
+            current_user.get('identity_hash'),
+            request.args.get('document_id', type=int)
+        )
+        
+        if validation_result.get('valid', False):
+            # Additional security validation
+            security_validation = security_validator.validate_session_security(session_token)
+            validation_result['security_analysis'] = security_validation.get('security_analysis', {})
+        
+        return jsonify(validation_result)
+        
+    except Exception as e:
+        print(f"❌ Error validating ephemeral session: {e}")
+        traceback.print_exc()
+        return jsonify({'error': 'Internal server error'}), 500
+
+@app.route('/api/sessions/ephemeral/expire/<session_token>', methods=['POST'])
+def expire_ephemeral_session_api(session_token):
+    """Manually expire an ephemeral session (Task 5.1)"""
+    try:
+        # Check user authentication
+        if not current_user.get('is_authenticated'):
+            return jsonify({'error': 'Authentication required'}), 401
+        
+        data = request.get_json() or {}
+        reason = data.get('reason', 'user_requested')
+        
+        # Expire the session
+        expiration_result = session_manager.expire_ephemeral_session(
+            session_token,
+            reason,
+            current_user.get('identity_hash')
+        )
+        
+        return jsonify(expiration_result)
+        
+    except Exception as e:
+        print(f"❌ Error expiring ephemeral session: {e}")
+        traceback.print_exc()
+        return jsonify({'error': 'Internal server error'}), 500
+
+@app.route('/api/sessions/ephemeral/active', methods=['GET'])
+def get_active_ephemeral_sessions_api():
+    """Get active ephemeral sessions for the current user (Task 5.1)"""
+    try:
+        # Check user authentication
+        if not current_user.get('is_authenticated'):
+            return jsonify({'error': 'Authentication required'}), 401
+        
+        # Get query parameters
+        document_id = request.args.get('document_id', type=int)
+        limit = min(int(request.args.get('limit', 50)), 100)  # Max 100
+        
+        # Get active sessions
+        sessions_result = session_manager.get_active_ephemeral_sessions(
+            current_user.get('identity_hash'),
+            document_id,
+            limit
+        )
+        
+        return jsonify(sessions_result)
+        
+    except Exception as e:
+        print(f"❌ Error getting active ephemeral sessions: {e}")
+        traceback.print_exc()
+        return jsonify({'error': 'Internal server error'}), 500
+
+@app.route('/api/sessions/ephemeral/cleanup', methods=['POST'])
+def cleanup_ephemeral_sessions_api():
+    """Clean up expired ephemeral sessions (Admin only - Task 5.1)"""
+    try:
+        # Check admin privileges
+        if not current_user.get('is_authenticated') or not is_admin_user(current_user):
+            return jsonify({'error': 'Admin access required'}), 403
+        
+        data = request.get_json() or {}
+        batch_size = min(int(data.get('batch_size', 100)), 500)  # Max 500
+        
+        # Perform cleanup
+        cleanup_result = session_manager.cleanup_expired_sessions(batch_size)
+        
+        return jsonify(cleanup_result)
+        
+    except Exception as e:
+        print(f"❌ Error cleaning up ephemeral sessions: {e}")
+        traceback.print_exc()
+        return jsonify({'error': 'Internal server error'}), 500
+
+@app.route('/api/sessions/statistics', methods=['GET'])
+def get_session_statistics_api():
+    """Get session statistics (Admin only - Task 5.1)"""
+    try:
+        # Check admin privileges
+        if not current_user.get('is_authenticated') or not is_admin_user(current_user):
+            return jsonify({'error': 'Admin access required'}), 403
+        
+        days_back = min(int(request.args.get('days_back', 7)), 30)  # Max 30 days
+        
+        # Get statistics
+        stats_result = session_manager.get_session_statistics(days_back)
+        
+        return jsonify(stats_result)
+        
+    except Exception as e:
+        print(f"❌ Error getting session statistics: {e}")
+        traceback.print_exc()
+        return jsonify({'error': 'Internal server error'}), 500
+
+# ==================== EPHEMERAL DID SECURITY VALIDATION API (Task 5.2) ====================
+
+@app.route('/api/security/validate-did', methods=['POST'])
+def validate_did_authenticity_api():
+    """Validate ephemeral DID authenticity (Task 5.2)"""
+    try:
+        # Check user authentication
+        if not current_user.get('is_authenticated'):
+            return jsonify({'error': 'Authentication required'}), 401
+        
+        data = request.get_json()
+        if not data:
+            return jsonify({'error': 'JSON data required'}), 400
+        
+        ephemeral_did = data.get('ephemeral_did')
+        ephemeral_public_key = data.get('ephemeral_public_key')
+        
+        if not ephemeral_did:
+            return jsonify({'error': 'ephemeral_did is required'}), 400
+        
+        # Validate DID authenticity
+        validation_result = security_validator.validate_ephemeral_did_authenticity(
+            ephemeral_did,
+            ephemeral_public_key,
+            current_user.get('identity_hash')
+        )
+        
+        return jsonify(validation_result)
+        
+    except Exception as e:
+        print(f"❌ Error validating DID authenticity: {e}")
+        traceback.print_exc()
+        return jsonify({'error': 'Internal server error'}), 500
+
+@app.route('/api/security/detect-reuse', methods=['POST'])
+def detect_did_reuse_api():
+    """Detect ephemeral DID reuse (Task 5.2)"""
+    try:
+        # Check user authentication
+        if not current_user.get('is_authenticated'):
+            return jsonify({'error': 'Authentication required'}), 401
+        
+        data = request.get_json()
+        if not data:
+            return jsonify({'error': 'JSON data required'}), 400
+        
+        ephemeral_did = data.get('ephemeral_did')
+        time_window_hours = min(int(data.get('time_window_hours', 24)), 168)  # Max 7 days
+        
+        if not ephemeral_did:
+            return jsonify({'error': 'ephemeral_did is required'}), 400
+        
+        # Detect reuse
+        reuse_result = security_validator.detect_ephemeral_did_reuse(
+            ephemeral_did,
+            current_user.get('identity_hash'),
+            time_window_hours
+        )
+        
+        return jsonify(reuse_result)
+        
+    except Exception as e:
+        print(f"❌ Error detecting DID reuse: {e}")
+        traceback.print_exc()
+        return jsonify({'error': 'Internal server error'}), 500
+
+@app.route('/api/security/validate-session/<session_token>', methods=['GET'])
+def validate_session_security_api(session_token):
+    """Comprehensive security validation of a session (Task 5.2)"""
+    try:
+        # Check user authentication
+        if not current_user.get('is_authenticated'):
+            return jsonify({'error': 'Authentication required'}), 401
+        
+        # Validate session security
+        validation_result = security_validator.validate_session_security(session_token)
+        
+        return jsonify(validation_result)
+        
+    except Exception as e:
+        print(f"❌ Error validating session security: {e}")
+        traceback.print_exc()
+        return jsonify({'error': 'Internal server error'}), 500
+
+@app.route('/api/security/usage-report', methods=['GET'])
+def generate_usage_report_api():
+    """Generate comprehensive usage report (Admin only - Task 5.2)"""
+    try:
+        # Check admin privileges
+        if not current_user.get('is_authenticated') or not is_admin_user(current_user):
+            return jsonify({'error': 'Admin access required'}), 403
+        
+        days_back = min(int(request.args.get('days_back', 7)), 30)  # Max 30 days
+        include_security = request.args.get('include_security', 'true').lower() == 'true'
+        
+        # Generate usage report
+        report_result = security_validator.generate_ephemeral_did_usage_report(
+            days_back,
+            include_security
+        )
+        
+        return jsonify(report_result)
+        
+    except Exception as e:
+        print(f"❌ Error generating usage report: {e}")
         traceback.print_exc()
         return jsonify({'error': 'Internal server error'}), 500
 
