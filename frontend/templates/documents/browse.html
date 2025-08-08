@@ -1,0 +1,302 @@
+{% extends "base.html" %}
+
+{% block title %}Browse Documents - Classification System{% endblock %}
+
+{% block extra_css %}
+<style>
+    .document-card {
+        border: 1px solid #dee2e6;
+        border-radius: 8px;
+        transition: transform 0.2s, box-shadow 0.2s;
+    }
+    
+    .document-card:hover {
+        transform: translateY(-2px);
+        box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+    }
+    
+    .classification-badge {
+        font-size: 0.8em;
+        font-weight: 600;
+    }
+    
+    .secure-access-btn {
+        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        border: none;
+        color: white;
+        transition: all 0.3s;
+    }
+    
+    .secure-access-btn:hover {
+        background: linear-gradient(135deg, #764ba2 0%, #667eea 100%);
+        transform: scale(1.05);
+        color: white;
+    }
+    
+    .access-history {
+        font-size: 0.85em;
+        color: #6c757d;
+    }
+    
+    .security-indicator {
+        display: flex;
+        align-items: center;
+        font-size: 0.8em;
+        margin-top: 8px;
+    }
+    
+    .security-level-standard {
+        color: #28a745;
+    }
+    
+    .security-level-ephemeral {
+        color: #6f42c1;
+        font-weight: 600;
+    }
+    
+    .no-documents {
+        text-align: center;
+        padding: 60px 20px;
+        color: #6c757d;
+    }
+    
+    .document-info {
+        border-left: 4px solid #dee2e6;
+        padding-left: 15px;
+    }
+    
+    .document-info.public {
+        border-left-color: #28a745;
+    }
+    
+    .document-info.internal {
+        border-left-color: #ffc107;
+    }
+    
+    .document-info.confidential {
+        border-left-color: #dc3545;
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="row">
+    <div class="col-12">
+        <div class="d-flex justify-content-between align-items-center mb-4">
+            <h1>
+                <i class="fas fa-folder-open me-2"></i>Browse Documents
+            </h1>
+            <div>
+                <a href="{{ url_for('upload_document') }}" class="btn btn-primary">
+                    <i class="fas fa-upload me-2"></i>Upload New Document
+                </a>
+                <a href="{{ url_for('dashboard') }}" class="btn btn-outline-secondary">
+                    <i class="fas fa-arrow-left me-2"></i>Back to Dashboard
+                </a>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div class="row mb-4">
+    <div class="col-12">
+        <div class="alert alert-info">
+            <i class="fas fa-shield-alt me-2"></i>
+            <strong>Secure Document Access:</strong> Use the "Secure Access" button for ephemeral DID-based encryption with perfect forward secrecy.
+        </div>
+    </div>
+</div>
+
+{% if documents %}
+<div class="row">
+    {% for document in documents %}
+    <div class="col-md-6 col-lg-4 mb-4">
+        <div class="card document-card h-100">
+            <div class="card-body">
+                <!-- Document Info -->
+                <div class="document-info {{ document.classification_level_name|lower }}">
+                    <h5 class="card-title mb-2">
+                        <i class="fas fa-file-alt me-2"></i>{{ document.filename }}
+                    </h5>
+                    
+                    <!-- Classification Badge -->
+                    <div class="mb-3">
+                        {% if document.classification_level == 1 %}
+                            <span class="badge bg-success classification-badge">
+                                <i class="fas fa-globe me-1"></i>{{ document.classification_level_name }} (Level {{ document.classification_level }})
+                            </span>
+                        {% elif document.classification_level == 2 %}
+                            <span class="badge bg-warning classification-badge">
+                                <i class="fas fa-building me-1"></i>{{ document.classification_level_name }} (Level {{ document.classification_level }})
+                            </span>
+                        {% elif document.classification_level == 3 %}
+                            <span class="badge bg-danger classification-badge">
+                                <i class="fas fa-lock me-1"></i>{{ document.classification_level_name }} (Level {{ document.classification_level }})
+                            </span>
+                        {% endif %}
+                        
+                        <!-- Access Status -->
+                        {% if document.can_access %}
+                            <span class="badge bg-success ms-2">
+                                <i class="fas fa-check-circle me-1"></i>Access Granted
+                            </span>
+                        {% else %}
+                            <span class="badge bg-secondary ms-2">
+                                <i class="fas fa-times-circle me-1"></i>Access Denied
+                            </span>
+                        {% endif %}
+                    </div>
+                    
+                    <!-- Document Details -->
+                    <div class="mb-3">
+                        {% if document.title %}
+                        <p class="card-text mb-1">
+                            <strong>Title:</strong> {{ document.title }}
+                        </p>
+                        {% endif %}
+                        
+                        {% if document.description %}
+                        <p class="card-text mb-1 text-muted">
+                            {{ document.description|truncate(100) }}
+                        </p>
+                        {% endif %}
+                        
+                        <small class="text-muted d-block">
+                            <i class="fas fa-calendar me-1"></i>
+                            Uploaded: {{ document.created_at|datetime }}
+                        </small>
+                        
+                        {% if document.created_by_name %}
+                        <small class="text-muted d-block">
+                            <i class="fas fa-user me-1"></i>
+                            By: {{ document.created_by_name }}
+                        </small>
+                        {% endif %}
+                        
+                        <small class="text-muted d-block">
+                            <i class="fas fa-hdd me-1"></i>
+                            Size: {{ document.size|filesizeformat if document.size else 'Unknown' }}
+                        </small>
+                    </div>
+                </div>
+                
+                <!-- Access Actions -->
+                <div class="mt-auto">
+                    {% if document.can_access %}
+                        <div class="d-flex gap-2 mb-2">
+                            <!-- Standard Access -->
+                            <button class="btn btn-outline-primary btn-sm flex-fill" 
+                                    onclick="accessDocument({{ document.id }}, 'standard')"
+                                    title="Standard document access">
+                                <i class="fas fa-download me-1"></i>Standard Access
+                            </button>
+                            
+                            <!-- Enhanced Secure Access Button (Task 3.3 requirement) -->
+                            <button class="btn secure-access-btn btn-sm flex-fill" 
+                                    onclick="accessDocument({{ document.id }}, 'ephemeral')"
+                                    title="Secure ephemeral DID-based access with perfect forward secrecy">
+                                <i class="fas fa-shield-alt me-1"></i>Secure Access
+                            </button>
+                        </div>
+                        
+                        <!-- Security Level Indicators -->
+                        <div class="security-indicator">
+                            <div class="security-level-standard me-3">
+                                <i class="fas fa-circle me-1"></i>Standard
+                            </div>
+                            <div class="security-level-ephemeral">
+                                <i class="fas fa-circle me-1"></i>Ephemeral DID
+                            </div>
+                        </div>
+                        
+                    {% else %}
+                        <div class="alert alert-warning mb-0" role="alert">
+                            <small>
+                                <i class="fas fa-exclamation-triangle me-1"></i>
+                                You need <strong>{{ document.classification_level_name }}</strong> classification credentials to access this document.
+                            </small>
+                        </div>
+                    {% endif %}
+                </div>
+            </div>
+            
+            <!-- Access History Footer -->
+            <div class="card-footer bg-light">
+                <div class="access-history">
+                    <i class="fas fa-history me-1"></i>
+                    <span>Recent access: Never</span>
+                    <!-- TODO: Add real access history -->
+                </div>
+            </div>
+        </div>
+    </div>
+    {% endfor %}
+</div>
+
+<!-- Pagination (if needed) -->
+{% if documents|length > 12 %}
+<div class="row">
+    <div class="col-12">
+        <nav aria-label="Document pagination">
+            <ul class="pagination justify-content-center">
+                <li class="page-item disabled">
+                    <span class="page-link">Previous</span>
+                </li>
+                <li class="page-item active">
+                    <span class="page-link">1</span>
+                </li>
+                <li class="page-item disabled">
+                    <span class="page-link">Next</span>
+                </li>
+            </ul>
+        </nav>
+    </div>
+</div>
+{% endif %}
+
+{% else %}
+<!-- No Documents State -->
+<div class="row">
+    <div class="col-12">
+        <div class="no-documents">
+            <i class="fas fa-folder-open fa-3x mb-3 text-muted"></i>
+            <h4>No Documents Available</h4>
+            <p class="mb-4">There are currently no documents available for browsing.</p>
+            <a href="{{ url_for('upload_document') }}" class="btn btn-primary">
+                <i class="fas fa-upload me-2"></i>Upload Your First Document
+            </a>
+        </div>
+    </div>
+</div>
+{% endif %}
+
+{% endblock %}
+
+{% block extra_js %}
+<script>
+/**
+ * Access document with specified method
+ */
+function accessDocument(documentId, method) {
+    if (method === 'ephemeral') {
+        // Redirect to ephemeral access page (Task 3.3 integration)
+        window.location.href = `/documents/request-ephemeral-access/${documentId}`;
+    } else {
+        // Standard access - could implement direct download
+        alert('Standard document access - Feature to be implemented');
+        // TODO: Implement standard document access
+    }
+}
+
+// Add tooltips to security indicators
+document.addEventListener('DOMContentLoaded', function() {
+    // Initialize Bootstrap tooltips if available
+    if (typeof bootstrap !== 'undefined' && bootstrap.Tooltip) {
+        var tooltipTriggerList = [].slice.call(document.querySelectorAll('[title]'));
+        var tooltipList = tooltipTriggerList.map(function (tooltipTriggerEl) {
+            return new bootstrap.Tooltip(tooltipTriggerEl);
+        });
+    }
+});
+</script>
+{% endblock %}

@@ -507,6 +507,107 @@ def initialize_identus():
 # Start Identus initialization in background
 threading.Thread(target=initialize_identus, daemon=True).start()
 
+# ==================== EPHEMERAL DID CLASSIFICATION FUNCTIONS (Task 2.3) ====================
+
+def verify_classification_for_ephemeral_access(user_identity_hash: str, classification_level: int) -> dict:
+    """Verify user has classification credentials for ephemeral document access"""
+    try:
+        conn = get_db_connection()
+        if not conn:
+            return {'success': False, 'error': 'Database connection failed'}
+        
+        cursor = conn.cursor(cursor_factory=RealDictCursor)
+        
+        # Check if user has exact matching classification level
+        cursor.execute("""
+            SELECT can_user_access_level(%s, %s) as can_access
+        """, (user_identity_hash, classification_level))
+        
+        access_check = cursor.fetchone()
+        cursor.close()
+        conn.close()
+        
+        if access_check and access_check['can_access']:
+            return {
+                'success': True,
+                'can_access': True,
+                'classification_level': classification_level,
+                'message': f'User has valid classification credentials for level {classification_level}'
+            }
+        else:
+            return {
+                'success': True,
+                'can_access': False,
+                'classification_level': classification_level,
+                'message': f'User lacks classification credentials for level {classification_level}'
+            }
+        
+    except Exception as e:
+        print(f"❌ Classification verification failed: {e}")
+        return {'success': False, 'error': str(e)}
+
+def validate_ongoing_ephemeral_session(session_token: str, user_identity_hash: str) -> dict:
+    """Validate ongoing ephemeral session status and permissions"""
+    try:
+        conn = get_db_connection()
+        if not conn:
+            return {'success': False, 'error': 'Database connection failed'}
+        
+        cursor = conn.cursor(cursor_factory=RealDictCursor)
+        
+        # Get session details with document info
+        cursor.execute("""
+            SELECT das.*, d.filename, d.classification_level, d.content_type,
+                   EXTRACT(EPOCH FROM (das.expires_at - NOW())) as seconds_until_expiry
+            FROM document_access_sessions das
+            JOIN documents d ON das.document_id = d.id
+            WHERE das.session_token = %s 
+            AND das.user_identity_hash = %s
+            AND das.expires_at > NOW()
+            AND das.completed_at IS NULL
+        """, (session_token, user_identity_hash))
+        
+        session = cursor.fetchone()
+        cursor.close()
+        conn.close()
+        
+        if not session:
+            return {
+                'success': True,
+                'valid': False,
+                'error': 'Session not found, expired, or completed',
+                'status': 'invalid'
+            }
+        
+        # Check if session is about to expire (less than 5 minutes)
+        time_remaining = int(session['seconds_until_expiry'])
+        status = 'active'
+        
+        if time_remaining <= 300:  # 5 minutes
+            status = 'expiring_soon'
+        elif time_remaining <= 60:  # 1 minute
+            status = 'critical_expiry'
+        
+        return {
+            'success': True,
+            'valid': True,
+            'session_id': session['id'],
+            'document_id': session['document_id'],
+            'document_filename': session['filename'],
+            'classification_level': session['classification_level'],
+            'expires_at': session['expires_at'].isoformat() if session['expires_at'] else None,
+            'seconds_remaining': time_remaining,
+            'status': status,
+            'classification_verified': session['classification_verified'],
+            'ephemeral_did': session['ephemeral_did'],
+            'created_at': session['created_at'].isoformat() if session['created_at'] else None,
+            'message': f'Session valid, {time_remaining} seconds remaining'
+        }
+        
+    except Exception as e:
+        print(f"❌ Ephemeral session validation failed: {e}")
+        return {'success': False, 'error': str(e)}
+
 # Template context processor to make current_user available in all templates
 @app.context_processor
 def inject_user():
@@ -1745,16 +1846,20 @@ def create_ephemeral_access_session():
         classification_level = document['classification_level']
         user_identity_hash = current_user['identity_hash']
         
-        # Check if user has exact matching classification level
-        cursor.execute("""
-            SELECT can_user_access_level(%s, %s) as can_access
-        """, (user_identity_hash, classification_level))
+        # Use new helper function for classification verification (Task 2.3)
+        cursor.close()
+        conn.close()
         
-        access_check = cursor.fetchone()
-        if not access_check['can_access']:
-            cursor.close()
-            conn.close()
+        classification_result = verify_classification_for_ephemeral_access(user_identity_hash, classification_level)
+        if not classification_result['success']:
+            return jsonify({'error': classification_result.get('error', 'Classification verification failed')}), 500
+        
+        if not classification_result['can_access']:
             return jsonify({'error': f'Insufficient classification credentials for level {classification_level}'}), 403
+        
+        # Reconnect for remaining operations
+        conn = get_db_connection()
+        cursor = conn.cursor(cursor_factory=RealDictCursor)
         
         # Check for DID reuse
         cursor.execute("""
@@ -1970,57 +2075,34 @@ def get_encrypted_document_ephemeral(session_token):
 
 @app.route('/api/ephemeral/session-status/<session_token>', methods=['GET'])
 def get_ephemeral_session_status(session_token):
-    """Get status of ephemeral access session"""
+    """Get status of ephemeral access session using new helper function (Task 2.3)"""
     try:
         if not current_user.get('authenticated'):
             return jsonify({'error': 'Authentication required'}), 401
         
-        conn = get_db_connection()
-        cursor = conn.cursor(cursor_factory=RealDictCursor)
+        # Use new helper function for session validation (Task 2.3)
+        validation_result = validate_ongoing_ephemeral_session(session_token, current_user['identity_hash'])
         
-        cursor.execute("""
-            SELECT das.*, d.filename, d.classification_level,
-                   EXTRACT(EPOCH FROM (das.expires_at - NOW())) as seconds_remaining
-            FROM document_access_sessions das
-            JOIN documents d ON das.document_id = d.id
-            WHERE das.session_token = %s 
-            AND das.user_identity_hash = %s
-        """, (session_token, current_user['identity_hash']))
+        if not validation_result['success']:
+            return jsonify({'error': validation_result.get('error', 'Session validation failed')}), 500
         
-        session = cursor.fetchone()
-        cursor.close()
-        conn.close()
+        if not validation_result['valid']:
+            return jsonify({'error': validation_result.get('error', 'Invalid session')}), 404
         
-        if not session:
-            return jsonify({'error': 'Session not found'}), 404
-        
-        # Determine session status
-        if session['completed_at']:
-            status = 'completed'
-        elif session['seconds_remaining'] <= 0:
-            status = 'expired'
-        elif session['access_granted']:
-            status = 'active'
-        elif session['classification_verified']:
-            status = 'authorized'
-        else:
-            status = 'pending'
-        
+        # Extract enhanced status information from validation result
         return jsonify({
             'success': True,
             'sessionToken': session_token,
-            'status': status,
-            'ephemeralDID': session['ephemeral_did'],
-            'documentId': session['document_id'],
-            'documentFilename': session['filename'],
-            'classificationLevel': session['classification_level'],
-            'expiresAt': session['expires_at'].isoformat(),
-            'secondsRemaining': max(0, int(session['seconds_remaining'] or 0)),
-            'accessGranted': session['access_granted'],
-            'documentEncrypted': session['document_encrypted_with_ephemeral_key'],
-            'createdAt': session['created_at'].isoformat(),
-            'accessedAt': session['accessed_at'].isoformat() if session['accessed_at'] else None,
-            'completedAt': session['completed_at'].isoformat() if session['completed_at'] else None
+            'status': validation_result['status'],
+            'ephemeralDID': validation_result['ephemeral_did'],
+            'documentId': validation_result['document_id'],
+            'documentFilename': validation_result['document_filename'],
+            'classificationLevel': validation_result['classification_level'],
+            'expiresAt': validation_result['expires_at'],
+            'secondsRemaining': validation_result['seconds_remaining'],
+            'classificationVerified': validation_result['classification_verified'],
+            'createdAt': validation_result['created_at'],
+            'message': validation_result['message']
         })
         
     except Exception as e:
@@ -2151,6 +2233,45 @@ def request_ephemeral_document_access_page(doc_id):
     except Exception as e:
         print(f"❌ Failed to load ephemeral access page: {e}")
         flash('Failed to load document access page.', 'error')
+        return redirect(url_for('dashboard'))
+
+@app.route('/documents/browse')
+def browse_documents():
+    """Browse available documents with ephemeral access options"""
+    try:
+        if not current_user.get('authenticated'):
+            flash('Please log in to browse documents.', 'error')
+            return redirect(url_for('login'))
+        
+        # Get available documents
+        conn = get_db_connection()
+        cursor = conn.cursor(cursor_factory=RealDictCursor)
+        
+        cursor.execute("""
+            SELECT d.*, u.full_name as created_by_name,
+                   CASE 
+                       WHEN d.classification_level = 1 THEN 'Public'
+                       WHEN d.classification_level = 2 THEN 'Internal' 
+                       WHEN d.classification_level = 3 THEN 'Confidential'
+                       ELSE 'Unknown'
+                   END as classification_level_name,
+                   can_user_access_level(%s, d.classification_level) as can_access
+            FROM documents d
+            LEFT JOIN users u ON d.created_by_user_id = u.id
+            ORDER BY d.created_at DESC
+        """, (current_user['identity_hash'],))
+        
+        documents = cursor.fetchall()
+        cursor.close()
+        conn.close()
+        
+        return render_template('documents/browse.html',
+                             documents=documents,
+                             current_user=current_user)
+        
+    except Exception as e:
+        print(f"❌ Failed to browse documents: {e}")
+        flash('Failed to load documents.', 'error')
         return redirect(url_for('dashboard'))
 
 # ==================== TEMPLATE FILTERS ====================

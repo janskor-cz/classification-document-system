@@ -221,6 +221,12 @@
 </style>
 {% endblock %}
 
+{% block extra_js %}
+<!-- Load Identus Client and new Ephemeral DID Client -->
+<script src="{{ url_for('static', filename='js/identus-client.js') }}"></script>
+<script src="{{ url_for('static', filename='js/ephemeral-did.js') }}"></script>
+{% endblock %}
+
 {% block content %}
 <div class="ephemeral-access-container">
     <div class="security-badge">
@@ -417,14 +423,17 @@ let documentData = {
     classificationLevel: {{ document.classification_level if document else 'null' }}
 };
 
-// Wait for ephemeral DID manager to be ready
-document.addEventListener('ephemeralDIDManagerReady', function() {
-    console.log('✅ Ephemeral DID Manager is ready');
-});
-
-document.addEventListener('ephemeralDIDManagerError', function(event) {
-    console.error('❌ Ephemeral DID Manager initialization failed:', event.detail.error);
-    showError('Failed to initialize cryptographic system: ' + event.detail.error.message);
+// Wait for new ephemeral DID client to be ready
+document.addEventListener('DOMContentLoaded', function() {
+    // Wait a moment for the ephemeral client to initialize
+    setTimeout(() => {
+        if (window.ephemeralDIDClient) {
+            console.log('✅ New Ephemeral DID Client is ready');
+        } else {
+            console.error('❌ Ephemeral DID Client not available');
+            showError('Failed to initialize new cryptographic system');
+        }
+    }, 1000);
 });
 
 /**
@@ -433,8 +442,8 @@ document.addEventListener('ephemeralDIDManagerError', function(event) {
 async function requestEphemeralAccess(event) {
     event.preventDefault();
     
-    if (!window.ephemeralDIDManager) {
-        showError('Ephemeral DID Manager not initialized. Please refresh the page.');
+    if (!window.ephemeralDIDClient) {
+        showError('New Ephemeral DID Client not initialized. Please refresh the page.');
         return;
     }
     
@@ -447,82 +456,67 @@ async function requestEphemeralAccess(event) {
         const businessJustification = document.getElementById('business-justification').value;
         const sessionDuration = parseInt(document.getElementById('session-duration').value);
         
-        // Step 1: Generate ephemeral DID
+        // Step 1: Generate ephemeral DID using new client
         updateStepDetails(1, 'Generating unique DID:key pair in your browser...');
-        const didResult = await window.ephemeralDIDManager.generateEphemeralDIDKey(documentData.id);
+        const didResult = await window.ephemeralDIDClient.generateEphemeralDIDForDocument(
+            documentData.id, 
+            businessJustification, 
+            sessionDuration
+        );
+        
+        if (!didResult.success) {
+            throw new Error(didResult.error || 'Failed to generate ephemeral DID');
+        }
+        
         setStepCompleted(1);
         console.log('✅ Ephemeral DID generated:', didResult.ephemeralDID);
         
-        // Step 2: Verify classification credentials
+        // Step 2: Request document access with ephemeral DID
         setStepActive(2);
-        updateStepDetails(2, 'Checking your classification credentials...');
+        updateStepDetails(2, 'Requesting secure document access...');
         
-        // Create ephemeral session request
-        const sessionRequest = {
-            documentId: documentData.id,
-            ephemeralDID: didResult.ephemeralDID,
-            ephemeralPublicKey: didResult.publicKeyJWK,
-            businessJustification: businessJustification,
-            sessionDurationMinutes: sessionDuration
-        };
+        const accessResult = await window.ephemeralDIDClient.requestDocumentWithEphemeralDID(didResult);
         
-        const sessionResponse = await fetch('/api/ephemeral/generate-session', {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-            },
-            body: JSON.stringify(sessionRequest)
-        });
-        
-        if (!sessionResponse.ok) {
-            const errorData = await sessionResponse.json();
-            throw new Error(errorData.error || 'Failed to create ephemeral session');
+        if (!accessResult.success) {
+            throw new Error(accessResult.error || 'Failed to request document access');
         }
         
-        const sessionData = await sessionResponse.json();
         setStepCompleted(2);
         
-        // Step 3: Create access session
+        // Step 3: Session established
         setStepActive(3);
-        updateStepDetails(3, 'Establishing secure ephemeral session...');
+        updateStepDetails(3, 'Secure ephemeral session established...');
         
         // Store session information
         currentSession = {
-            sessionToken: sessionData.sessionToken,
-            ephemeralDID: didResult.ephemeralDID,
-            keyId: didResult.keyId,
-            expiresAt: new Date(sessionData.expiresAt)
+            sessionToken: accessResult.sessionToken,
+            ephemeralDID: accessResult.ephemeralDID,
+            sessionId: accessResult.sessionId,
+            expiresAt: new Date(accessResult.expiresAt)
         };
         
         setStepCompleted(3);
         
-        // Step 4: Encrypt document
+        // Step 4: Download and decrypt document
         setStepActive(4);
-        updateStepDetails(4, 'Encrypting document with your ephemeral public key...');
+        updateStepDetails(4, 'Downloading and decrypting document...');
         
-        const encryptResponse = await fetch(`/api/ephemeral/encrypt-document/${sessionData.sessionToken}`);
-        if (!encryptResponse.ok) {
-            const errorData = await encryptResponse.json();
-            throw new Error(errorData.error || 'Failed to encrypt document');
+        const decryptResult = await window.ephemeralDIDClient.decryptDocumentWithEphemeralKey(accessResult.sessionToken);
+        
+        if (!decryptResult.success) {
+            throw new Error(decryptResult.error || 'Failed to decrypt document');
         }
         
-        const encryptedData = await encryptResponse.json();
         setStepCompleted(4);
         
-        // Step 5: Client-side decryption
+        // Step 5: Document ready
         setStepActive(5);
-        updateStepDetails(5, 'Decrypting document in your browser...');
-        
-        const decryptedData = await window.ephemeralDIDManager.decryptWithPrivateKey(
-            encryptedData, 
-            didResult.keyId
-        );
-        
+        updateStepDetails(5, 'Document ready for secure access!');
         setStepCompleted(5);
         
         // Show session info and download options
         showSessionInfo(currentSession);
-        showDownloadSection(decryptedData);
+        showDownloadSection(decryptResult);
         startCountdown(currentSession.expiresAt);
         
         // Hide form
@@ -764,20 +758,23 @@ function startNewSession() {
     hideError();
 }
 
-// Handle page unload - cleanup keys
+// Handle page unload - cleanup keys using new client
 window.addEventListener('beforeunload', function() {
-    if (currentSession && currentSession.keyId && window.ephemeralDIDManager) {
-        window.ephemeralDIDManager.destroyEphemeralKey(currentSession.keyId);
+    if (currentSession && currentSession.sessionToken && window.ephemeralDIDClient) {
+        window.ephemeralDIDClient.cleanupEphemeralSession(currentSession.sessionToken, false);
     }
 });
 
-// Auto-cleanup on page focus change
+// Auto-cleanup on page focus change using new client
 document.addEventListener('visibilitychange', function() {
-    if (document.visibilityState === 'hidden' && currentSession && currentSession.keyId) {
+    if (document.visibilityState === 'hidden' && currentSession && currentSession.sessionToken) {
         // Optionally cleanup when user switches tabs (aggressive security)
         setTimeout(() => {
             if (document.visibilityState === 'hidden') {
                 console.log('🔒 Auto-cleanup due to page being hidden for extended time');
+                if (window.ephemeralDIDClient) {
+                    window.ephemeralDIDClient.cleanupEphemeralSession(currentSession.sessionToken, false);
+                }
                 handleSessionExpiry();
             }
         }, 5 * 60 * 1000); // 5 minutes
