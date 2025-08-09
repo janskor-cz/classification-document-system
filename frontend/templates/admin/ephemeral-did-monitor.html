@@ -1,0 +1,856 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Ephemeral DID Monitoring - Classification System</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
+    <style>
+        .status-indicator {
+            display: inline-block;
+            width: 10px;
+            height: 10px;
+            border-radius: 50%;
+            margin-right: 8px;
+        }
+        .status-active { background-color: #28a745; }
+        .status-expiring { background-color: #ffc107; }
+        .status-expired { background-color: #dc3545; }
+        .security-score {
+            font-weight: bold;
+        }
+        .score-high { color: #28a745; }
+        .score-medium { color: #ffc107; }
+        .score-low { color: #dc3545; }
+        .metric-card {
+            transition: all 0.3s ease;
+            border-left: 4px solid transparent;
+        }
+        .metric-card:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 4px 8px rgba(0,0,0,0.1);
+        }
+        .metric-card.primary { border-left-color: #007bff; }
+        .metric-card.success { border-left-color: #28a745; }
+        .metric-card.warning { border-left-color: #ffc107; }
+        .metric-card.danger { border-left-color: #dc3545; }
+        .session-timeline {
+            max-height: 400px;
+            overflow-y: auto;
+        }
+        .timeline-item {
+            border-left: 3px solid #e9ecef;
+            padding-left: 1rem;
+            margin-bottom: 1rem;
+            position: relative;
+        }
+        .timeline-item::before {
+            content: '';
+            position: absolute;
+            left: -6px;
+            top: 8px;
+            width: 9px;
+            height: 9px;
+            border-radius: 50%;
+            background-color: #6c757d;
+        }
+        .timeline-item.active::before { background-color: #28a745; }
+        .timeline-item.expiring::before { background-color: #ffc107; }
+        .timeline-item.expired::before { background-color: #dc3545; }
+        .admin-controls {
+            position: sticky;
+            top: 20px;
+            z-index: 100;
+        }
+        .loading-spinner {
+            display: none;
+        }
+        .alert-security {
+            border-left: 4px solid #dc3545;
+            background-color: #f8d7da;
+        }
+        .chart-container {
+            position: relative;
+            height: 300px;
+        }
+    </style>
+</head>
+<body>
+    <!-- Navigation -->
+    <nav class="navbar navbar-expand-lg navbar-dark bg-primary">
+        <div class="container">
+            <a class="navbar-brand" href="/">
+                <i class="fas fa-shield-alt me-2"></i>Classification System
+            </a>
+            <div class="navbar-nav ms-auto">
+                <a class="nav-link" href="/admin">
+                    <i class="fas fa-tachometer-alt me-1"></i>Admin Dashboard
+                </a>
+                <a class="nav-link" href="/admin/ephemeral-sessions">
+                    <i class="fas fa-eye me-1"></i>Ephemeral Monitoring
+                </a>
+                <a class="nav-link" href="/logout">
+                    <i class="fas fa-sign-out-alt me-1"></i>Logout
+                </a>
+            </div>
+        </div>
+    </nav>
+
+    <div class="container-fluid mt-4">
+        <div class="row">
+            <!-- Header and Controls -->
+            <div class="col-12 mb-4">
+                <div class="d-flex justify-content-between align-items-center">
+                    <h2>
+                        <i class="fas fa-shield-alt text-primary me-2"></i>
+                        Ephemeral DID Monitoring Dashboard
+                    </h2>
+                    <div class="admin-controls">
+                        <button class="btn btn-outline-primary me-2" onclick="refreshDashboard()">
+                            <i class="fas fa-sync-alt"></i> Refresh
+                        </button>
+                        <button class="btn btn-warning me-2" onclick="cleanupExpiredSessions()">
+                            <i class="fas fa-broom"></i> Cleanup Expired
+                        </button>
+                        <button class="btn btn-danger" onclick="emergencyShutdown()" data-bs-toggle="modal" data-bs-target="#emergencyModal">
+                            <i class="fas fa-exclamation-triangle"></i> Emergency Stop
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Metrics Overview -->
+        <div class="row mb-4">
+            <div class="col-md-3">
+                <div class="card metric-card primary">
+                    <div class="card-body text-center">
+                        <i class="fas fa-users fa-2x text-primary mb-2"></i>
+                        <h4 class="card-title" id="active-sessions-count">-</h4>
+                        <p class="card-text">Active Sessions</p>
+                    </div>
+                </div>
+            </div>
+            <div class="col-md-3">
+                <div class="card metric-card warning">
+                    <div class="card-body text-center">
+                        <i class="fas fa-clock fa-2x text-warning mb-2"></i>
+                        <h4 class="card-title" id="expiring-sessions-count">-</h4>
+                        <p class="card-text">Expiring Soon (&lt;15 min)</p>
+                    </div>
+                </div>
+            </div>
+            <div class="col-md-3">
+                <div class="card metric-card success">
+                    <div class="card-body text-center">
+                        <i class="fas fa-file-alt fa-2x text-success mb-2"></i>
+                        <h4 class="card-title" id="documents-accessed-count">-</h4>
+                        <p class="card-text">Documents Accessed Today</p>
+                    </div>
+                </div>
+            </div>
+            <div class="col-md-3">
+                <div class="card metric-card danger">
+                    <div class="card-body text-center">
+                        <i class="fas fa-exclamation-triangle fa-2x text-danger mb-2"></i>
+                        <h4 class="card-title" id="security-alerts-count">-</h4>
+                        <p class="card-text">Security Alerts</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Security Alerts Section -->
+        <div class="row mb-4" id="security-alerts-section" style="display: none;">
+            <div class="col-12">
+                <div class="card">
+                    <div class="card-header bg-danger text-white">
+                        <h5 class="card-title mb-0">
+                            <i class="fas fa-exclamation-triangle me-2"></i>Security Alerts
+                        </h5>
+                    </div>
+                    <div class="card-body">
+                        <div id="security-alerts-list">
+                            <!-- Security alerts will be populated here -->
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Main Content -->
+        <div class="row">
+            <!-- Active Sessions -->
+            <div class="col-lg-8">
+                <div class="card">
+                    <div class="card-header d-flex justify-content-between align-items-center">
+                        <h5 class="card-title mb-0">
+                            <i class="fas fa-list me-2"></i>Active Ephemeral Sessions
+                        </h5>
+                        <div>
+                            <select class="form-select form-select-sm" id="session-filter" onchange="filterSessions()">
+                                <option value="all">All Sessions</option>
+                                <option value="active">Active Only</option>
+                                <option value="expiring">Expiring Soon</option>
+                                <option value="high-security">High Security Score</option>
+                            </select>
+                        </div>
+                    </div>
+                    <div class="card-body">
+                        <div class="table-responsive">
+                            <table class="table table-striped" id="sessions-table">
+                                <thead>
+                                    <tr>
+                                        <th>Status</th>
+                                        <th>User</th>
+                                        <th>Document</th>
+                                        <th>DID Preview</th>
+                                        <th>Created</th>
+                                        <th>Expires</th>
+                                        <th>Security Score</th>
+                                        <th>Actions</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="sessions-list">
+                                    <tr>
+                                        <td colspan="8" class="text-center">
+                                            <div class="loading-spinner">
+                                                <div class="spinner-border text-primary" role="status">
+                                                    <span class="visually-hidden">Loading...</span>
+                                                </div>
+                                            </div>
+                                        </td>
+                                    </tr>
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Session Timeline and Analytics -->
+            <div class="col-lg-4">
+                <div class="card mb-4">
+                    <div class="card-header">
+                        <h5 class="card-title mb-0">
+                            <i class="fas fa-chart-line me-2"></i>Session Analytics
+                        </h5>
+                    </div>
+                    <div class="card-body">
+                        <div class="chart-container">
+                            <canvas id="session-analytics-chart"></canvas>
+                        </div>
+                        <div class="mt-3">
+                            <small class="text-muted">Sessions created over the last 24 hours</small>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="card">
+                    <div class="card-header">
+                        <h5 class="card-title mb-0">
+                            <i class="fas fa-history me-2"></i>Recent Activity
+                        </h5>
+                    </div>
+                    <div class="card-body">
+                        <div class="session-timeline" id="activity-timeline">
+                            <!-- Timeline items will be populated here -->
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Document Access Patterns -->
+        <div class="row mt-4">
+            <div class="col-12">
+                <div class="card">
+                    <div class="card-header">
+                        <h5 class="card-title mb-0">
+                            <i class="fas fa-file-alt me-2"></i>Document Access Patterns
+                        </h5>
+                    </div>
+                    <div class="card-body">
+                        <div class="row">
+                            <div class="col-md-6">
+                                <canvas id="classification-access-chart"></canvas>
+                                <p class="text-center mt-2 text-muted">Access by Classification Level</p>
+                            </div>
+                            <div class="col-md-6">
+                                <canvas id="department-access-chart"></canvas>
+                                <p class="text-center mt-2 text-muted">Access by Department</p>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Emergency Shutdown Modal -->
+    <div class="modal fade" id="emergencyModal" tabindex="-1" aria-labelledby="emergencyModalLabel" aria-hidden="true">
+        <div class="modal-dialog">
+            <div class="modal-content">
+                <div class="modal-header bg-danger text-white">
+                    <h5 class="modal-title" id="emergencyModalLabel">
+                        <i class="fas fa-exclamation-triangle me-2"></i>Emergency Shutdown
+                    </h5>
+                    <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="Close"></button>
+                </div>
+                <div class="modal-body">
+                    <div class="alert alert-danger">
+                        <strong>Warning:</strong> This will immediately expire all active ephemeral sessions and prevent new ones from being created.
+                    </div>
+                    <p>Are you sure you want to perform an emergency shutdown of the ephemeral DID system?</p>
+                    <div class="mb-3">
+                        <label for="shutdown-reason" class="form-label">Reason for shutdown:</label>
+                        <textarea class="form-control" id="shutdown-reason" rows="3" required></textarea>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                    <button type="button" class="btn btn-danger" onclick="confirmEmergencyShutdown()">
+                        <i class="fas fa-power-off me-1"></i>Emergency Shutdown
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Session Details Modal -->
+    <div class="modal fade" id="sessionDetailsModal" tabindex="-1" aria-labelledby="sessionDetailsModalLabel" aria-hidden="true">
+        <div class="modal-dialog modal-lg">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title" id="sessionDetailsModalLabel">
+                        <i class="fas fa-info-circle me-2"></i>Session Details
+                    </h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                </div>
+                <div class="modal-body" id="session-details-content">
+                    <!-- Session details will be populated here -->
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
+                    <button type="button" class="btn btn-danger" id="force-expire-btn" onclick="forceExpireSession()">
+                        <i class="fas fa-times me-1"></i>Force Expire
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Scripts -->
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/js/bootstrap.bundle.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script>
+        // Global variables
+        let currentSessions = [];
+        let sessionAnalyticsChart = null;
+        let classificationChart = null;
+        let departmentChart = null;
+        let selectedSessionToken = null;
+        let refreshInterval = null;
+
+        // Initialize dashboard
+        document.addEventListener('DOMContentLoaded', function() {
+            initializeDashboard();
+            startAutoRefresh();
+        });
+
+        async function initializeDashboard() {
+            showLoading();
+            await Promise.all([
+                loadSessionMetrics(),
+                loadActiveSessions(),
+                loadSecurityAlerts(),
+                loadSessionAnalytics(),
+                loadRecentActivity(),
+                loadDocumentAccessPatterns()
+            ]);
+            hideLoading();
+        }
+
+        function showLoading() {
+            document.querySelector('.loading-spinner').style.display = 'block';
+        }
+
+        function hideLoading() {
+            document.querySelector('.loading-spinner').style.display = 'none';
+        }
+
+        async function loadSessionMetrics() {
+            try {
+                const response = await fetch('/api/admin/ephemeral/metrics');
+                const data = await response.json();
+                
+                document.getElementById('active-sessions-count').textContent = data.active_sessions || 0;
+                document.getElementById('expiring-sessions-count').textContent = data.expiring_sessions || 0;
+                document.getElementById('documents-accessed-count').textContent = data.documents_accessed_today || 0;
+                document.getElementById('security-alerts-count').textContent = data.security_alerts || 0;
+            } catch (error) {
+                console.error('Error loading session metrics:', error);
+            }
+        }
+
+        async function loadActiveSessions() {
+            try {
+                const response = await fetch('/api/admin/ephemeral/active-sessions');
+                const sessions = await response.json();
+                currentSessions = sessions;
+                renderSessionsTable(sessions);
+            } catch (error) {
+                console.error('Error loading active sessions:', error);
+                renderSessionError();
+            }
+        }
+
+        function renderSessionsTable(sessions) {
+            const tbody = document.getElementById('sessions-list');
+            
+            if (sessions.length === 0) {
+                tbody.innerHTML = '<tr><td colspan="8" class="text-center text-muted">No active ephemeral sessions</td></tr>';
+                return;
+            }
+
+            tbody.innerHTML = sessions.map(session => {
+                const status = getSessionStatus(session);
+                const securityScore = session.security_score || 0;
+                
+                return `
+                    <tr>
+                        <td>
+                            <span class="status-indicator status-${status.class}"></span>
+                            ${status.text}
+                        </td>
+                        <td>
+                            <strong>${session.user_name || 'Unknown'}</strong><br>
+                            <small class="text-muted">${session.user_email || session.user_identity_hash?.substring(0, 8) + '...'}</small>
+                        </td>
+                        <td>
+                            <strong>${session.document_title || 'Document ' + session.document_id}</strong><br>
+                            <small class="text-muted">Level ${session.document_classification || '?'}</small>
+                        </td>
+                        <td>
+                            <code class="small">${session.ephemeral_did?.substring(0, 20) + '...' || 'N/A'}</code>
+                        </td>
+                        <td>
+                            <small>${formatDateTime(session.created_at)}</small>
+                        </td>
+                        <td>
+                            <small class="${getExpirationClass(session.expires_at)}">
+                                ${formatDateTime(session.expires_at)}
+                            </small>
+                        </td>
+                        <td>
+                            <span class="security-score score-${getSecurityScoreClass(securityScore)}">
+                                ${securityScore}%
+                            </span>
+                        </td>
+                        <td>
+                            <button class="btn btn-sm btn-outline-info me-1" onclick="viewSessionDetails('${session.session_token}')">
+                                <i class="fas fa-eye"></i>
+                            </button>
+                            <button class="btn btn-sm btn-outline-danger" onclick="forceExpireSession('${session.session_token}')">
+                                <i class="fas fa-times"></i>
+                            </button>
+                        </td>
+                    </tr>
+                `;
+            }).join('');
+        }
+
+        function renderSessionError() {
+            const tbody = document.getElementById('sessions-list');
+            tbody.innerHTML = '<tr><td colspan="8" class="text-center text-danger">Error loading sessions</td></tr>';
+        }
+
+        function getSessionStatus(session) {
+            const now = new Date();
+            const expiresAt = new Date(session.expires_at);
+            const timeRemaining = expiresAt - now;
+            
+            if (timeRemaining <= 0) {
+                return { class: 'expired', text: 'Expired' };
+            } else if (timeRemaining <= 15 * 60 * 1000) { // 15 minutes
+                return { class: 'expiring', text: 'Expiring Soon' };
+            } else {
+                return { class: 'active', text: 'Active' };
+            }
+        }
+
+        function getExpirationClass(expiresAt) {
+            const now = new Date();
+            const expiration = new Date(expiresAt);
+            const timeRemaining = expiration - now;
+            
+            if (timeRemaining <= 0) return 'text-danger';
+            if (timeRemaining <= 15 * 60 * 1000) return 'text-warning';
+            return 'text-success';
+        }
+
+        function getSecurityScoreClass(score) {
+            if (score >= 80) return 'high';
+            if (score >= 60) return 'medium';
+            return 'low';
+        }
+
+        function formatDateTime(dateString) {
+            const date = new Date(dateString);
+            return date.toLocaleString();
+        }
+
+        async function loadSecurityAlerts() {
+            try {
+                const response = await fetch('/api/admin/ephemeral/security-alerts');
+                const alerts = await response.json();
+                
+                if (alerts.length > 0) {
+                    document.getElementById('security-alerts-section').style.display = 'block';
+                    renderSecurityAlerts(alerts);
+                }
+            } catch (error) {
+                console.error('Error loading security alerts:', error);
+            }
+        }
+
+        function renderSecurityAlerts(alerts) {
+            const container = document.getElementById('security-alerts-list');
+            container.innerHTML = alerts.map(alert => `
+                <div class="alert alert-security">
+                    <div class="d-flex justify-content-between">
+                        <div>
+                            <strong>${alert.type}</strong>: ${alert.message}
+                            <br><small class="text-muted">${formatDateTime(alert.timestamp)}</small>
+                        </div>
+                        <button class="btn btn-sm btn-outline-danger" onclick="dismissAlert('${alert.id}')">
+                            <i class="fas fa-times"></i>
+                        </button>
+                    </div>
+                </div>
+            `).join('');
+        }
+
+        async function loadSessionAnalytics() {
+            try {
+                const response = await fetch('/api/admin/ephemeral/analytics');
+                const data = await response.json();
+                renderSessionAnalyticsChart(data.session_timeline || []);
+            } catch (error) {
+                console.error('Error loading session analytics:', error);
+            }
+        }
+
+        function renderSessionAnalyticsChart(timelineData) {
+            const ctx = document.getElementById('session-analytics-chart').getContext('2d');
+            
+            if (sessionAnalyticsChart) {
+                sessionAnalyticsChart.destroy();
+            }
+            
+            sessionAnalyticsChart = new Chart(ctx, {
+                type: 'line',
+                data: {
+                    labels: timelineData.map(point => new Date(point.hour).toLocaleTimeString()),
+                    datasets: [{
+                        label: 'Sessions Created',
+                        data: timelineData.map(point => point.count),
+                        borderColor: '#007bff',
+                        backgroundColor: 'rgba(0, 123, 255, 0.1)',
+                        tension: 0.4
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    scales: {
+                        y: { beginAtZero: true }
+                    }
+                }
+            });
+        }
+
+        async function loadRecentActivity() {
+            try {
+                const response = await fetch('/api/admin/ephemeral/recent-activity');
+                const activities = await response.json();
+                renderActivityTimeline(activities);
+            } catch (error) {
+                console.error('Error loading recent activity:', error);
+            }
+        }
+
+        function renderActivityTimeline(activities) {
+            const container = document.getElementById('activity-timeline');
+            container.innerHTML = activities.map(activity => `
+                <div class="timeline-item ${activity.status}">
+                    <div class="d-flex justify-content-between">
+                        <strong>${activity.action}</strong>
+                        <small class="text-muted">${formatDateTime(activity.timestamp)}</small>
+                    </div>
+                    <div class="text-muted small">
+                        ${activity.description}
+                    </div>
+                </div>
+            `).join('');
+        }
+
+        async function loadDocumentAccessPatterns() {
+            try {
+                const response = await fetch('/api/admin/ephemeral/access-patterns');
+                const data = await response.json();
+                
+                renderClassificationChart(data.by_classification || {});
+                renderDepartmentChart(data.by_department || {});
+            } catch (error) {
+                console.error('Error loading document access patterns:', error);
+            }
+        }
+
+        function renderClassificationChart(data) {
+            const ctx = document.getElementById('classification-access-chart').getContext('2d');
+            
+            if (classificationChart) {
+                classificationChart.destroy();
+            }
+            
+            classificationChart = new Chart(ctx, {
+                type: 'doughnut',
+                data: {
+                    labels: Object.keys(data),
+                    datasets: [{
+                        data: Object.values(data),
+                        backgroundColor: ['#28a745', '#ffc107', '#dc3545', '#007bff']
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false
+                }
+            });
+        }
+
+        function renderDepartmentChart(data) {
+            const ctx = document.getElementById('department-access-chart').getContext('2d');
+            
+            if (departmentChart) {
+                departmentChart.destroy();
+            }
+            
+            departmentChart = new Chart(ctx, {
+                type: 'bar',
+                data: {
+                    labels: Object.keys(data),
+                    datasets: [{
+                        label: 'Access Count',
+                        data: Object.values(data),
+                        backgroundColor: '#007bff'
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    scales: {
+                        y: { beginAtZero: true }
+                    }
+                }
+            });
+        }
+
+        // Action functions
+        async function refreshDashboard() {
+            await initializeDashboard();
+            showNotification('Dashboard refreshed', 'success');
+        }
+
+        async function cleanupExpiredSessions() {
+            try {
+                const response = await fetch('/api/admin/ephemeral/cleanup-expired', {
+                    method: 'POST'
+                });
+                const result = await response.json();
+                
+                showNotification(`Cleaned up ${result.cleaned_count || 0} expired sessions`, 'success');
+                await refreshDashboard();
+            } catch (error) {
+                showNotification('Error cleaning up expired sessions', 'error');
+            }
+        }
+
+        function filterSessions() {
+            const filter = document.getElementById('session-filter').value;
+            let filteredSessions = currentSessions;
+            
+            switch (filter) {
+                case 'active':
+                    filteredSessions = currentSessions.filter(s => getSessionStatus(s).class === 'active');
+                    break;
+                case 'expiring':
+                    filteredSessions = currentSessions.filter(s => getSessionStatus(s).class === 'expiring');
+                    break;
+                case 'high-security':
+                    filteredSessions = currentSessions.filter(s => (s.security_score || 0) >= 80);
+                    break;
+            }
+            
+            renderSessionsTable(filteredSessions);
+        }
+
+        async function viewSessionDetails(sessionToken) {
+            try {
+                const response = await fetch(`/api/admin/ephemeral/session-details/${sessionToken}`);
+                const session = await response.json();
+                
+                selectedSessionToken = sessionToken;
+                renderSessionDetails(session);
+                
+                const modal = new bootstrap.Modal(document.getElementById('sessionDetailsModal'));
+                modal.show();
+            } catch (error) {
+                showNotification('Error loading session details', 'error');
+            }
+        }
+
+        function renderSessionDetails(session) {
+            const content = document.getElementById('session-details-content');
+            content.innerHTML = `
+                <div class="row">
+                    <div class="col-md-6">
+                        <h6>Session Information</h6>
+                        <dl class="row">
+                            <dt class="col-sm-4">Token:</dt>
+                            <dd class="col-sm-8"><code>${session.session_token}</code></dd>
+                            <dt class="col-sm-4">Status:</dt>
+                            <dd class="col-sm-8"><span class="badge bg-${getSessionStatus(session).class === 'active' ? 'success' : 'warning'}">${getSessionStatus(session).text}</span></dd>
+                            <dt class="col-sm-4">Created:</dt>
+                            <dd class="col-sm-8">${formatDateTime(session.created_at)}</dd>
+                            <dt class="col-sm-4">Expires:</dt>
+                            <dd class="col-sm-8">${formatDateTime(session.expires_at)}</dd>
+                        </dl>
+                    </div>
+                    <div class="col-md-6">
+                        <h6>User & Document</h6>
+                        <dl class="row">
+                            <dt class="col-sm-4">User:</dt>
+                            <dd class="col-sm-8">${session.user_name || 'Unknown'}<br><small class="text-muted">${session.user_email || 'No email'}</small></dd>
+                            <dt class="col-sm-4">Document:</dt>
+                            <dd class="col-sm-8">${session.document_title || 'Document ' + session.document_id}<br><small class="text-muted">Classification Level ${session.document_classification}</small></dd>
+                        </dl>
+                    </div>
+                </div>
+                <div class="row mt-3">
+                    <div class="col-12">
+                        <h6>Security Analysis</h6>
+                        <p><strong>Security Score:</strong> <span class="security-score score-${getSecurityScoreClass(session.security_score || 0)}">${session.security_score || 0}%</span></p>
+                        <p><strong>Ephemeral DID:</strong> <code>${session.ephemeral_did || 'N/A'}</code></p>
+                        <div class="mt-2">
+                            <small class="text-muted">Session metadata and security validation details...</small>
+                        </div>
+                    </div>
+                </div>
+            `;
+        }
+
+        async function forceExpireSession(sessionToken = null) {
+            const token = sessionToken || selectedSessionToken;
+            if (!token) return;
+            
+            if (!confirm('Are you sure you want to force expire this session?')) {
+                return;
+            }
+            
+            try {
+                const response = await fetch(`/api/admin/ephemeral/force-expire/${token}`, {
+                    method: 'POST'
+                });
+                
+                if (response.ok) {
+                    showNotification('Session expired successfully', 'success');
+                    await refreshDashboard();
+                    
+                    // Close modal if open
+                    const modal = bootstrap.Modal.getInstance(document.getElementById('sessionDetailsModal'));
+                    if (modal) modal.hide();
+                } else {
+                    throw new Error('Failed to expire session');
+                }
+            } catch (error) {
+                showNotification('Error expiring session', 'error');
+            }
+        }
+
+        function confirmEmergencyShutdown() {
+            const reason = document.getElementById('shutdown-reason').value;
+            if (!reason.trim()) {
+                alert('Please provide a reason for the emergency shutdown.');
+                return;
+            }
+            
+            // Implement emergency shutdown logic
+            fetch('/api/admin/ephemeral/emergency-shutdown', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ reason: reason })
+            }).then(response => {
+                if (response.ok) {
+                    showNotification('Emergency shutdown initiated', 'warning');
+                    refreshDashboard();
+                } else {
+                    showNotification('Error during emergency shutdown', 'error');
+                }
+            });
+            
+            const modal = bootstrap.Modal.getInstance(document.getElementById('emergencyModal'));
+            modal.hide();
+        }
+
+        async function dismissAlert(alertId) {
+            try {
+                await fetch(`/api/admin/ephemeral/dismiss-alert/${alertId}`, {
+                    method: 'POST'
+                });
+                await loadSecurityAlerts();
+            } catch (error) {
+                showNotification('Error dismissing alert', 'error');
+            }
+        }
+
+        function startAutoRefresh() {
+            refreshInterval = setInterval(async () => {
+                await loadSessionMetrics();
+                await loadActiveSessions();
+            }, 30000); // Refresh every 30 seconds
+        }
+
+        function showNotification(message, type) {
+            // Simple notification system
+            const alertClass = type === 'error' ? 'alert-danger' : 
+                              type === 'warning' ? 'alert-warning' : 'alert-success';
+            
+            const notification = document.createElement('div');
+            notification.className = `alert ${alertClass} alert-dismissible fade show position-fixed top-0 end-0 m-3`;
+            notification.style.zIndex = '9999';
+            notification.innerHTML = `
+                ${message}
+                <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+            `;
+            
+            document.body.appendChild(notification);
+            
+            setTimeout(() => {
+                if (notification.parentNode) {
+                    notification.remove();
+                }
+            }, 5000);
+        }
+
+        // Cleanup on page unload
+        window.addEventListener('beforeunload', () => {
+            if (refreshInterval) {
+                clearInterval(refreshInterval);
+            }
+        });
+    </script>
+</body>
+</html>

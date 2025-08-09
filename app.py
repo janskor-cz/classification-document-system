@@ -342,8 +342,8 @@ current_user = {
     'email': 'john.doe@company.com',
     'enterprise_account_name': 'DEFAULT_ENTERPRISE',  # Enterprise account used as salt
     'enterprise_account_display': 'Default Enterprise Account',
-    'identity_hash': 'sample_identity_hash_john_doe_12345678',  # Generated with enterprise account as salt
-    'identity_hash_display': 'sample_i...',  # First 8 chars for display
+    'identity_hash': 'f51bf4b4f472276b722dd7f3a0f1d24636985c862eac00012cf8560f0abbb7c2',  # Generated with enterprise account as salt
+    'identity_hash_display': 'f51bf4b4...',  # First 8 chars for display
     'full_name': 'John Doe',
     'department': 'Engineering',
     'job_title': 'Senior Developer',
@@ -713,6 +713,24 @@ def dashboard():
                                 
                         credentials.append(credential_display)
                     
+                    # Get document count (documents user can access)
+                    cursor.execute("""
+                        SELECT COUNT(*) as doc_count
+                        FROM documents d
+                        WHERE d.classification_level <= (
+                            SELECT COALESCE(MAX(classification_level), 0)
+                            FROM issued_credentials 
+                            WHERE identity_hash = %s 
+                            AND credential_category = 'classification' 
+                            AND status = 'issued'
+                            AND (expires_at IS NULL OR expires_at > NOW())
+                        )
+                        OR d.created_by_identity_hash = %s
+                    """, (current_user.get('identity_hash'), current_user.get('identity_hash')))
+                    
+                    doc_result = cursor.fetchone()
+                    stats['documents_accessed'] = doc_result['doc_count'] if doc_result else 0
+                    
                     # Get credential requests
                     cursor.execute("""
                         SELECT COUNT(*) as pending_count
@@ -781,15 +799,162 @@ def dashboard():
         flash('Error loading dashboard', 'error')
         return render_template('dashboard.html', stats={}, credentials=[], recent_activities=[])
 
-@app.route('/login')
+@app.route('/login', methods=['GET', 'POST'])
 def login():
-    """Login page"""
+    """Login page and authentication"""
+    if request.method == 'POST':
+        try:
+            email = request.form.get('email', '').strip().lower()
+            password = request.form.get('password', '')
+            
+            if not email or not password:
+                flash('Please provide both email and password', 'error')
+                return render_template('login.html')
+            
+            # Get user from database
+            conn = get_db_connection()
+            if conn:
+                with conn.cursor() as cursor:
+                    cursor.execute("""
+                        SELECT id, email, password_hash, enterprise_account_name, 
+                               identity_hash, full_name, department, job_title, 
+                               employee_id, has_enterprise_credential
+                        FROM users 
+                        WHERE email = %s AND is_active = true
+                    """, (email,))
+                    
+                    user_row = cursor.fetchone()
+                    
+                    if user_row and verify_password(password, user_row['password_hash']):
+                        # Update current_user with real database data
+                        global current_user
+                        current_user = {
+                            'is_authenticated': True,
+                            'user_id': user_row['id'],
+                            'email': user_row['email'],
+                            'enterprise_account_name': user_row['enterprise_account_name'],
+                            'enterprise_account_display': 'Default Enterprise Account',
+                            'identity_hash': user_row['identity_hash'],
+                            'identity_hash_display': user_row['identity_hash'][:8] + '...',
+                            'full_name': user_row['full_name'],
+                            'department': user_row['department'],
+                            'job_title': user_row['job_title'],
+                            'employee_id': user_row['employee_id'],
+                            'has_enterprise_credential': user_row['has_enterprise_credential'],
+                            'is_admin': is_admin_user({'email': user_row['email'], 'job_title': user_row['job_title'], 'is_authenticated': True}),
+                            'can_recover_credentials': True,
+                            'last_login': datetime.now(),
+                            'session_expires': datetime.now() + timedelta(hours=8)
+                        }
+                        
+                        flash(f'Welcome back, {user_row["full_name"]}!', 'success')
+                        return redirect(url_for('dashboard'))
+                    else:
+                        flash('Invalid email or password', 'error')
+                        return render_template('login.html')
+            else:
+                flash('Database connection error', 'error')
+                return render_template('login.html')
+                
+        except Exception as e:
+            print(f"❌ Login error: {e}")
+            traceback.print_exc()
+            flash('Login error occurred', 'error')
+            return render_template('login.html')
+    
+    # GET request - show login form
     return render_template('login.html')
+
+@app.route('/logout')
+def logout():
+    """Logout user"""
+    global current_user
+    current_user = {
+        'is_authenticated': False,
+        'user_id': None,
+        'email': None,
+        'full_name': 'Guest'
+    }
+    flash('You have been logged out successfully', 'success')
+    return redirect(url_for('login'))
 
 @app.route('/documents/upload')
 def upload_document():
     """Document upload page"""
     return render_template('documents/upload.html')
+
+@app.route('/documents/browse')
+def browse_documents():
+    """Browse documents page"""
+    try:
+        # Check if user is authenticated
+        if not current_user.get('is_authenticated'):
+            return redirect(url_for('login'))
+        
+        # Get user's accessible documents from database
+        conn = get_db_connection()
+        documents = []
+        
+        if conn:
+            try:
+                with conn.cursor() as cursor:
+                    # Get documents the user can access based on their classification level
+                    cursor.execute("""
+                        SELECT d.id, d.title, d.filename, d.classification_level, 
+                               d.classification_label, d.file_size, d.created_at,
+                               d.created_by_identity_hash, u.full_name as uploaded_by_name
+                        FROM documents d
+                        JOIN users u ON d.created_by_user_id = u.id
+                        WHERE d.classification_level <= (
+                            SELECT COALESCE(MAX(classification_level), 0)
+                            FROM issued_credentials 
+                            WHERE identity_hash = %s 
+                            AND credential_category = 'classification' 
+                            AND status = 'issued'
+                            AND (expires_at IS NULL OR expires_at > NOW())
+                        )
+                        OR d.created_by_identity_hash = %s
+                        ORDER BY d.created_at DESC
+                    """, (current_user.get('identity_hash'), current_user.get('identity_hash')))
+                    
+                    rows = cursor.fetchall()
+                    
+                    for row in rows:
+                        # Map classification level to name
+                        classification_name = {
+                            1: 'Public',
+                            2: 'Internal', 
+                            3: 'Confidential'
+                        }.get(row['classification_level'], 'Unknown')
+                        
+                        # Since the query already filters for accessible documents, 
+                        # all returned documents should have access granted
+                        documents.append({
+                            'id': row['id'],
+                            'title': row['title'],
+                            'filename': row['filename'],
+                            'classification_level': row['classification_level'],
+                            'classification_label': row['classification_label'],
+                            'classification_level_name': classification_name,
+                            'file_size': row['file_size'],
+                            'created_at': row['created_at'],
+                            'uploaded_by_name': row['uploaded_by_name'],
+                            'created_by_identity_hash': row['created_by_identity_hash'],
+                            'can_access': True  # All returned documents are accessible
+                        })
+                        
+            except Exception as e:
+                print(f"❌ Error fetching documents: {e}")
+                flash('Error loading documents', 'error')
+            finally:
+                conn.close()
+        
+        return render_template('documents/browse.html', documents=documents)
+        
+    except Exception as e:
+        print(f"❌ Browse documents error: {e}")
+        flash('Error loading documents', 'error')
+        return render_template('documents/browse.html', documents=[])
 
 def is_admin_user(user):
     """Check if user has admin privileges"""
@@ -1100,6 +1265,10 @@ def get_user_max_classification_level_api():
 def request_credential():
     """Handle credential request submission"""
     try:
+        # Check authentication
+        if not current_user.get('is_authenticated'):
+            return jsonify({'success': False, 'error': 'Authentication required'}), 401
+            
         data = request.get_json()
         
         if not data:
@@ -1829,21 +1998,33 @@ def handle_document_upload():
         print(f"📄 Document uploaded: {title} ({classification}) - ID: {document_id}")
         
         flash(f'Document "{title}" uploaded successfully with {classification} classification', 'success')
-        return jsonify({
-            'success': True,
-            'message': f'Document uploaded and classified as {classification}',
-            'document': document_data,
-            'redirect_url': url_for('dashboard')
-        })
+        
+        # Check if this is an AJAX request or form submission
+        if request.headers.get('Content-Type') == 'application/json' or request.headers.get('Accept') == 'application/json':
+            # Return JSON for AJAX requests
+            return jsonify({
+                'success': True,
+                'message': f'Document uploaded and classified as {classification}',
+                'document': document_data,
+                'redirect_url': url_for('dashboard')
+            })
+        else:
+            # Redirect for form submissions
+            return redirect(url_for('dashboard'))
         
     except Exception as e:
         print(f"❌ Document upload failed: {e}")
         traceback.print_exc()
         flash('Document upload failed. Please try again.', 'error')
-        return jsonify({
-            'success': False,
-            'message': f'Upload failed: {str(e)}'
-        }), 500
+        
+        # Check if this is an AJAX request or form submission
+        if request.headers.get('Content-Type') == 'application/json' or request.headers.get('Accept') == 'application/json':
+            return jsonify({
+                'success': False,
+                'message': f'Upload failed: {str(e)}'
+            }), 500
+        else:
+            return redirect(url_for('upload_document'))
 
 # ==================== DOCUMENT ACCESS METHODS API (Task 4.1) ====================
 
@@ -2904,44 +3085,6 @@ def request_ephemeral_document_access_page(doc_id):
         flash('Failed to load document access page.', 'error')
         return redirect(url_for('dashboard'))
 
-@app.route('/documents/browse')
-def browse_documents():
-    """Browse available documents with ephemeral access options"""
-    try:
-        if not current_user.get('authenticated'):
-            flash('Please log in to browse documents.', 'error')
-            return redirect(url_for('login'))
-        
-        # Get available documents
-        conn = get_db_connection()
-        cursor = conn.cursor(cursor_factory=RealDictCursor)
-        
-        cursor.execute("""
-            SELECT d.*, u.full_name as created_by_name,
-                   CASE 
-                       WHEN d.classification_level = 1 THEN 'Public'
-                       WHEN d.classification_level = 2 THEN 'Internal' 
-                       WHEN d.classification_level = 3 THEN 'Confidential'
-                       ELSE 'Unknown'
-                   END as classification_level_name,
-                   can_user_access_level(%s, d.classification_level) as can_access
-            FROM documents d
-            LEFT JOIN users u ON d.created_by_user_id = u.id
-            ORDER BY d.created_at DESC
-        """, (current_user['identity_hash'],))
-        
-        documents = cursor.fetchall()
-        cursor.close()
-        conn.close()
-        
-        return render_template('documents/browse.html',
-                             documents=documents,
-                             current_user=current_user)
-        
-    except Exception as e:
-        print(f"❌ Failed to browse documents: {e}")
-        flash('Failed to load documents.', 'error')
-        return redirect(url_for('dashboard'))
 
 # ==================== TEMPLATE FILTERS ====================
 
