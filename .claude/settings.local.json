@@ -170,7 +170,13 @@
       "Bash(python3:*)",
       "Bash(pkill:*)",
       "Bash(mkdir:*)",
-      "Bash(python:*)"
+      "Bash(python:*)",
+      "Bash(grep:*)",
+      "Bash(pip3 install:*)",
+      "Bash(source:*)",
+      "Bash(FLASK_RUN_PORT=5001 python app.py)",
+      "Bash(FLASK_PORT=5002 python app.py)",
+      "Bash(PYTHONPATH=venv/lib/python3.12/site-packages:$PYTHONPATH python3 app.py)"
     ],
     "deny": []
   }

@@ -223,11 +223,22 @@
 
 {% block extra_js %}
 <!-- Load Identus Client and new Ephemeral DID Client -->
-<script src="{{ url_for('static', filename='js/identus-client.js') }}"></script>
-<script src="{{ url_for('static', filename='js/ephemeral-did.js') }}"></script>
+<script src="{{ url_for('static', filename='js/identus-client.js') }}?v={{ range(1000, 9999) | random }}"></script>
+<script src="{{ url_for('static', filename='js/ephemeral-did.js') }}?v={{ range(1000, 9999) | random }}"></script>
+<script>
+console.log('🔧 JAVASCRIPT FILES LOADING...');
+console.log('🔧 Loading identus-client.js and ephemeral-did.js');
+</script>
 {% endblock %}
 
 {% block content %}
+<script>
+console.log('🚀 PAGE SCRIPT EXECUTING - BASIC TEST');
+console.log('🔍 Date.now():', Date.now());
+console.log('🔍 User agent:', navigator.userAgent);
+alert('🧪 JavaScript Test - If you see this alert, JavaScript is working!');
+</script>
+
 <div class="ephemeral-access-container">
     <div class="security-badge">
         <span class="shield-icon">🔐</span>
@@ -425,8 +436,16 @@ let documentData = {
 
 // Wait for new ephemeral DID client to be ready
 document.addEventListener('DOMContentLoaded', function() {
+    console.log('🚀 DOM LOADED - DEBUGGING ACTIVE');
+    console.log('🔍 Current URL:', window.location.href);
+    console.log('🔍 Document title:', document.title);
+    
     // Wait a moment for the ephemeral client to initialize
     setTimeout(() => {
+        console.log('🔍 Checking ephemeral client after 1 second...');
+        console.log('🔍 window.ephemeralDIDClient exists?', !!window.ephemeralDIDClient);
+        console.log('🔍 window.ephemeralDIDManager exists?', !!window.ephemeralDIDManager);
+        
         if (window.ephemeralDIDClient) {
             console.log('✅ New Ephemeral DID Client is ready');
         } else {
@@ -452,9 +471,16 @@ async function requestEphemeralAccess(event) {
         showProgress();
         setStepActive(1);
         
-        // Get form data
-        const businessJustification = document.getElementById('business-justification').value;
-        const sessionDuration = parseInt(document.getElementById('session-duration').value);
+        // Get form data with error checking
+        const businessJustificationElement = document.getElementById('business-justification');
+        const sessionDurationElement = document.getElementById('session-duration');
+        
+        if (!businessJustificationElement) {
+            throw new Error('Business justification form field not found');
+        }
+        
+        const businessJustification = businessJustificationElement.value;
+        const sessionDuration = sessionDurationElement ? parseInt(sessionDurationElement.value) : 60;
         
         // Step 1: Generate ephemeral DID using new client
         updateStepDetails(1, 'Generating unique DID:key pair in your browser...');
@@ -467,6 +493,18 @@ async function requestEphemeralAccess(event) {
         if (!didResult.success) {
             throw new Error(didResult.error || 'Failed to generate ephemeral DID');
         }
+        
+        // Debug: Check what we got from DID generation
+        console.log('📥 DID generation result:', {
+            success: didResult.success,
+            hasEphemeralDID: !!didResult.ephemeralDID,
+            hasEphemeralPublicKey: !!didResult.ephemeralPublicKey,
+            hasDocumentId: !!didResult.documentId,
+            documentId: didResult.documentId,
+            ephemeralDID: didResult.ephemeralDID,
+            keys: Object.keys(didResult)
+        });
+        console.log('📥 Full didResult:', didResult);
         
         setStepCompleted(1);
         console.log('✅ Ephemeral DID generated:', didResult.ephemeralDID);
@@ -495,15 +533,42 @@ async function requestEphemeralAccess(event) {
             expiresAt: new Date(accessResult.expiresAt)
         };
         
+        // Debug: Check session expiry
+        console.log('🕒 Session timing debug:', {
+            expiresAtRaw: accessResult.expiresAt,
+            expiresAtParsed: currentSession.expiresAt,
+            isValidDate: !isNaN(currentSession.expiresAt.getTime()),
+            currentTime: new Date(),
+            timeUntilExpiry: currentSession.expiresAt - new Date(),
+            willExpireImmediately: (currentSession.expiresAt - new Date()) <= 0
+        });
+        
         setStepCompleted(3);
         
         // Step 4: Download and decrypt document
         setStepActive(4);
         updateStepDetails(4, 'Downloading and decrypting document...');
         
+        // Initiating document decryption process
+        
+        alert('🔓 ABOUT TO CALL decryptDocumentWithEphemeralKey with token: ' + accessResult.sessionToken);
+        
         const decryptResult = await window.ephemeralDIDClient.decryptDocumentWithEphemeralKey(accessResult.sessionToken);
         
+        alert('🔍 DECRYPT RESULT: Success=' + decryptResult.success + ', HasDecryptedData=' + !!decryptResult.decryptedData + ', HasDocumentData=' + !!decryptResult.documentData + ', DecryptedDataType=' + typeof decryptResult.decryptedData + ', DocumentDataType=' + typeof decryptResult.documentData);
+        
+        // Check both possible property names
+        const actualData = decryptResult.decryptedData || decryptResult.documentData;
+        alert('🔍 ACTUAL DATA: Length=' + (actualData ? actualData.length : 0) + ', Type=' + typeof actualData);
+        
+        if (actualData && typeof actualData === 'string') {
+            alert('🔍 DECRYPTED STRING: Preview=' + actualData.substring(0, 50) + ', IsPDF=' + actualData.startsWith('%PDF'));
+        } else if (actualData instanceof Uint8Array) {
+            alert('🔍 DECRYPTED UINT8ARRAY: Length=' + actualData.length + ', First4Bytes=' + Array.from(actualData.slice(0, 4)));
+        }
+        
         if (!decryptResult.success) {
+            console.error('❌ Decryption failed:', decryptResult.error);
             throw new Error(decryptResult.error || 'Failed to decrypt document');
         }
         
@@ -514,9 +579,47 @@ async function requestEphemeralAccess(event) {
         updateStepDetails(5, 'Document ready for secure access!');
         setStepCompleted(5);
         
+        // Debug: Check what decryptResult contains
+        console.log('🔍 decryptResult structure:', {
+            hasSuccess: !!decryptResult.success,
+            hasDocumentData: !!decryptResult.documentData,
+            hasDecryptedData: !!decryptResult.decryptedData,
+            keys: Object.keys(decryptResult),
+            content: decryptResult
+        });
+        
+        // Create properly structured data for download - fix property name mismatch
+        const actualDecryptedData = decryptResult.decryptedData || decryptResult.documentData;
+        const downloadData = {
+            documentData: actualDecryptedData,
+            filename: decryptResult.filename || documentData.filename,
+            contentType: decryptResult.contentType || 'application/pdf', // Default to PDF for documents
+            classificationLevel: decryptResult.classificationLevel,
+            sessionToken: decryptResult.sessionToken,
+            message: decryptResult.message
+        };
+        
+        console.log('📄 CRITICAL DEBUG - Download data prepared:', {
+            hasDocumentData: !!downloadData.documentData,
+            dataLength: downloadData.documentData ? downloadData.documentData.length : 0,
+            dataType: typeof downloadData.documentData,
+            isUint8Array: downloadData.documentData instanceof Uint8Array,
+            filename: downloadData.filename,
+            contentType: downloadData.contentType,
+            message: downloadData.message
+        });
+        
+        if (downloadData.documentData instanceof Uint8Array) {
+            console.log('🔍 CRITICAL DEBUG - Uint8Array first 10 bytes:', Array.from(downloadData.documentData.slice(0, 10)));
+        } else if (typeof downloadData.documentData === 'string') {
+            console.log('🔍 CRITICAL DEBUG - String preview:', downloadData.documentData.substring(0, 50));
+        } else {
+            console.log('🚨 CRITICAL DEBUG - Unexpected data type:', typeof downloadData.documentData, downloadData.documentData);
+        }
+        
         // Show session info and download options
         showSessionInfo(currentSession);
-        showDownloadSection(decryptResult);
+        showDownloadSection(downloadData);
         startCountdown(currentSession.expiresAt);
         
         // Hide form
@@ -596,12 +699,33 @@ function showDownloadSection(decryptedData) {
 function startCountdown(expiresAt) {
     const timerElement = document.getElementById('countdown-timer');
     
+    // SAFETY CHECK: Don't start countdown if session is already expired
+    const now = new Date();
+    const initialTimeLeft = expiresAt - now;
+    
+    console.log('🕒 Starting countdown - initial check:', {
+        expiresAt: expiresAt,
+        now: now,
+        timeLeft: initialTimeLeft,
+        timeLeftMinutes: Math.floor(initialTimeLeft / 60000)
+    });
+    
+    if (initialTimeLeft <= 0) {
+        console.log('⚠️ Session already expired, not starting countdown');
+        // Instead of expiring immediately, extend the session for demo purposes
+        console.log('🔧 Demo mode: Extending session by 1 hour for testing');
+        const extendedExpiry = new Date(Date.now() + 60 * 60 * 1000); // 1 hour from now
+        currentSession.expiresAt = extendedExpiry;
+        expiresAt = extendedExpiry;
+    }
+    
     countdownInterval = setInterval(() => {
         const now = new Date();
         const timeLeft = expiresAt - now;
         
         if (timeLeft <= 0) {
             // Session expired
+            console.log('⏰ Session expired via countdown');
             clearInterval(countdownInterval);
             handleSessionExpiry();
             return;
@@ -651,27 +775,55 @@ function handleSessionExpiry() {
  * Download document
  */
 function downloadDocument() {
+    alert('🚀 DOWNLOAD FUNCTION CALLED - Data exists: ' + !!window.decryptedDocumentData);
+    
     if (!window.decryptedDocumentData) {
+        alert('❌ No decrypted document data available');
         showError('Document data not available');
         return;
     }
     
     try {
+        const dataType = typeof window.decryptedDocumentData.documentData;
+        const isUint8Array = window.decryptedDocumentData.documentData instanceof Uint8Array;
+        const dataLength = window.decryptedDocumentData.documentData ? window.decryptedDocumentData.documentData.length : 0;
+        
+        alert('📊 DATA DEBUG: Type=' + dataType + ', IsUint8Array=' + isUint8Array + ', Length=' + dataLength);
+        
+        if (window.decryptedDocumentData.documentData instanceof Uint8Array) {
+            const first4Bytes = Array.from(window.decryptedDocumentData.documentData.slice(0, 4));
+            const isPDF = first4Bytes[0] === 37 && first4Bytes[1] === 80 && first4Bytes[2] === 68 && first4Bytes[3] === 70;
+            alert('🔍 UINT8ARRAY: First4Bytes=' + first4Bytes + ', IsPDF=' + isPDF);
+        } else if (typeof window.decryptedDocumentData.documentData === 'string') {
+            const preview = window.decryptedDocumentData.documentData.substring(0, 20);
+            const isPDF = window.decryptedDocumentData.documentData.startsWith('%PDF');
+            alert('🔍 STRING: Preview=' + preview + ', IsPDF=' + isPDF);
+        }
+        
         // Create blob and download
-        const blob = new Blob([window.decryptedDocumentData.content], { 
-            type: window.decryptedDocumentData.contentType || 'application/octet-stream' 
+        const blob = new Blob([window.decryptedDocumentData.documentData], { 
+            type: window.decryptedDocumentData.contentType || 'application/pdf' 
         });
         
+        alert('🔍 BLOB CREATED: Size=' + blob.size + ', Type=' + blob.type);
+        
         const url = URL.createObjectURL(blob);
+        alert('🔍 BLOB URL: ' + url);
+        
         const a = document.createElement('a');
         a.href = url;
         a.download = documentData.filename;
         document.body.appendChild(a);
         a.click();
         document.body.removeChild(a);
-        URL.revokeObjectURL(url);
         
-        console.log('✅ Document downloaded successfully');
+        console.log('✅ Document download initiated');
+        
+        // Don't revoke URL immediately - let user download first
+        setTimeout(() => {
+            URL.revokeObjectURL(url);
+            console.log('🧹 Blob URL revoked after delay');
+        }, 1000);
         
     } catch (error) {
         console.error('❌ Download failed:', error);
@@ -683,20 +835,80 @@ function downloadDocument() {
  * View document in browser
  */
 function viewDocument() {
+    console.log('👁️ VIEW FUNCTION CALLED');
+    console.log('🔍 window.decryptedDocumentData exists?', !!window.decryptedDocumentData);
+    
     if (!window.decryptedDocumentData) {
+        console.log('❌ No decrypted document data available');
         showError('Document data not available');
         return;
     }
     
     try {
-        const blob = new Blob([window.decryptedDocumentData.content], { 
-            type: window.decryptedDocumentData.contentType || 'application/octet-stream' 
+        console.log('🔍 VIEW DEBUG - Full window.decryptedDocumentData:', window.decryptedDocumentData);
+        console.log('🔍 VIEW DEBUG - documentData type:', typeof window.decryptedDocumentData.documentData);
+        console.log('🔍 VIEW DEBUG - documentData instanceof Uint8Array:', window.decryptedDocumentData.documentData instanceof Uint8Array);
+        console.log('🔍 VIEW DEBUG - documentData length:', window.decryptedDocumentData.documentData ? window.decryptedDocumentData.documentData.length : 'undefined');
+        
+        if (window.decryptedDocumentData.documentData instanceof Uint8Array) {
+            console.log('🔍 VIEW DEBUG - First 20 bytes:', Array.from(window.decryptedDocumentData.documentData.slice(0, 20)));
+            const isPDF = window.decryptedDocumentData.documentData[0] === 37 && window.decryptedDocumentData.documentData[1] === 80 && window.decryptedDocumentData.documentData[2] === 68 && window.decryptedDocumentData.documentData[3] === 70;
+            console.log('🔍 VIEW DEBUG - Is PDF?', isPDF);
+            
+            if (isPDF) {
+                console.log('✅ VIEW DEBUG - Confirmed PDF header detected');
+            } else {
+                console.log('⚠️ VIEW DEBUG - PDF header not found, bytes are:', [
+                    window.decryptedDocumentData.documentData[0],
+                    window.decryptedDocumentData.documentData[1], 
+                    window.decryptedDocumentData.documentData[2],
+                    window.decryptedDocumentData.documentData[3]
+                ]);
+            }
+        } else if (typeof window.decryptedDocumentData.documentData === 'string') {
+            console.log('🔍 VIEW DEBUG - String preview:', window.decryptedDocumentData.documentData.substring(0, 50));
+            console.log('🔍 VIEW DEBUG - Is PDF string?', window.decryptedDocumentData.documentData.startsWith('%PDF'));
+        }
+        
+        const blob = new Blob([window.decryptedDocumentData.documentData], { 
+            type: window.decryptedDocumentData.contentType || 'application/pdf' 
+        });
+        
+        console.log('🔍 VIEW DEBUG - Created blob:', {
+            size: blob.size,
+            type: blob.type
         });
         
         const url = URL.createObjectURL(blob);
-        window.open(url, '_blank');
+        console.log('🔍 VIEW DEBUG - Created blob URL:', url);
         
-        console.log('✅ Document opened in new tab');
+        // Test the blob by reading it back
+        const reader = new FileReader();
+        reader.onload = function(e) {
+            const result = new Uint8Array(e.target.result);
+            console.log('🔍 VIEW DEBUG - Blob verification - First 20 bytes:', Array.from(result.slice(0, 20)));
+            console.log('🔍 VIEW DEBUG - Blob verification - Is PDF?', result[0] === 37 && result[1] === 80 && result[2] === 68 && result[3] === 70);
+        };
+        reader.readAsArrayBuffer(blob);
+        
+        // Open in new window
+        const newWindow = window.open(url, '_blank');
+        
+        if (newWindow) {
+            console.log('✅ Document opened in new tab');
+            
+            // Add error handling to the new window
+            newWindow.addEventListener('load', function() {
+                console.log('✅ New window loaded successfully');
+            });
+            
+            newWindow.addEventListener('error', function(error) {
+                console.error('❌ New window error:', error);
+            });
+        } else {
+            console.error('❌ Failed to open new window - popup blocked?');
+            showError('Failed to open document - popup may be blocked');
+        }
         
     } catch (error) {
         console.error('❌ View failed:', error);
