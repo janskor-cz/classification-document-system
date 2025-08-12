@@ -10,7 +10,30 @@ This is the **Classification Document System** - a comprehensive Flask-based web
 
 ### Starting the Application
 
-**Complete Multi-Agent Setup (Recommended)**:
+**🚀 MAIN STARTUP SCRIPT (Recommended)**:
+```bash
+# Complete system startup with all components
+./start.sh
+
+# This single command handles:
+# - Python virtual environment setup
+# - PostgreSQL database with proper configuration (max_connections=300)
+# - All 3 Identus agents (issuer, holder, verifier) with vault containers
+# - Flask application with full SSI functionality
+# - Health checks and status monitoring
+```
+
+**Other Start Options**:
+```bash
+./start.sh quick     # Start Flask app only (requires existing setup)
+./start.sh database  # Setup PostgreSQL database only
+./start.sh agents    # Setup Identus agents only
+./start.sh status    # Show current system status
+./start.sh cleanup   # Stop and remove all services
+./start.sh help      # Show help with all options
+```
+
+**Manual Setup Method**:
 ```bash
 # 1. Setup PostgreSQL database with all required databases and users
 ./scripts/setup-database.sh
@@ -24,25 +47,17 @@ python app.py
 
 **Docker Compose Method**:
 ```bash
-# Start all services using Docker Compose (agents on different ports than scripts)
+# Start all services using Docker Compose
 docker-compose up -d
 
-# Start Flask application (connects to agents on ports 8000, 7000, 9000)
+# Start Flask application
 python app.py
 ```
 
-**Alternative Method (Database Only)**:
-```bash
-# Start supporting services only  
-docker-compose up -d postgres redis
+### Environment Setup
 
-# Start Flask application (basic functionality without credential issuance)
-python app.py
-```
-
-**Environment Setup**:
 ```bash
-# Create virtual environment (recommended)
+# Create virtual environment
 python -m venv venv
 source venv/bin/activate  # Linux/Mac
 # or
@@ -51,32 +66,9 @@ venv\Scripts\activate     # Windows
 # Install dependencies
 pip install -r requirements.txt
 
-# Copy environment configuration
+# Copy and configure environment
 cp .env.example .env
 # Edit .env with your specific settings
-```
-
-### Database Operations
-
-```bash
-# Initialize database (PostgreSQL via Docker Compose)
-docker-compose exec postgres psql -U identus_user -d identus_db -f /docker-entrypoint-initdb.d/init-db.sql
-
-# Connect to database
-docker-compose exec postgres psql -U identus_user -d identus_db
-```
-
-### Python Dependencies
-
-```bash
-# Install dependencies
-pip install -r requirements.txt
-
-# Recommended: Use virtual environment
-python -m venv venv
-source venv/bin/activate  # Linux/Mac
-# or
-venv\Scripts\activate     # Windows
 ```
 
 ### Service Health Checks
@@ -85,670 +77,263 @@ venv\Scripts\activate     # Windows
 # Check Flask application
 curl http://localhost:5000/health
 
-# Check Identus Issuer Agent (if running)
-curl http://localhost:8080/_system/health
+# Check Identus Agents
+curl http://localhost:8080/_system/health  # Issuer
+curl http://localhost:7000/_system/health  # Holder  
+curl http://localhost:9000/_system/health  # Verifier
 
 # Check agent status
 ./scripts/check-identus-status.sh
 ```
 
-### Managing Identus Multi-Agent System
+## 🚀 Multi-Tenant Architecture
 
-```bash
-# Start complete 3-agent system (issuer, holder, verifier)
-./scripts/setup-agents.sh
+### Enterprise-Based Multi-Tenancy
 
-# Check system status
-./scripts/setup-agents.sh status
+The system implements Hyperledger Identus multi-tenancy with enterprise-based agent routing, supporting multiple cloud agents and tenant isolation.
 
-# Stop and cleanup all agents and vaults
-./scripts/setup-agents.sh cleanup
+**Multi-Agent Configuration**:
+- **Primary Agent Cluster**: Production agents (ports 8080, 7000, 9000)
+- **Secondary Agent Cluster**: Backup/DR agents (ports 8081, 7001, 9001) 
+- **Enterprise-Specific Agents**: Government/specialized agents (port 8082)
 
-# Health checks for individual agents
-curl http://localhost:8080/_system/health  # Issuer
-curl http://localhost:7000/_system/health  # Holder  
-curl http://localhost:9000/_system/health  # Verifier
-```
+**Enterprise Accounts**:
+- **DEFAULT_ENTERPRISE**: Basic classification levels (public, internal)
+- **ENTERPRISE_A**: Full classification access (public, internal, confidential)
+- **ENTERPRISE_B**: Business-focused access (public, internal)
+- **GOVERNMENT_AGENCY**: Maximum security levels (public, internal, confidential, restricted)
 
-## 🚀 New Features & Comprehensive SSI System
+**Security Features**:
+- API Key Authentication with SHA-256 hashing
+- Tenant ID separation and isolated wallets
+- Enterprise-specific agent routing with fallback chains
+- Classification-based access control per enterprise
 
-### 🔐 Complete Admin Panel & User Management
+### Multi-Tenant API Endpoints
 
-**Admin Authentication & Access Control**:
-- **Secure Role-Based Access**: Only users with specific job titles or email patterns can access admin functions
-- **Admin Panel URL**: `/admin` - comprehensive interface for managing credential requests
-- **Navigation Integration**: Admin link appears only for authorized users
-- **Multi-level Security**: Both route-level and API-level permission checks
+**Agent Management**:
+- `GET /api/multi-tenant/agents/status` - Health status of all agents
+- `GET /api/multi-tenant/enterprises/status` - Enterprise configuration
+- `GET /api/multi-tenant/test/connectivity` - Connectivity testing
 
-**Admin Capabilities**:
-- **View Pending Requests**: See all credential requests awaiting approval with user details
-- **Approve/Deny Workflow**: One-click approval or denial with reason tracking
-- **Real-time Statistics**: Pending requests count, unique users, high-level requests
-- **Audit Trail**: Complete logging of all admin actions with timestamps
+**Enterprise Operations**:
+- `POST /api/multi-tenant/enterprise/set` - Set enterprise context
+- `POST /api/multi-tenant/credential/issue` - Issue credentials with tenant isolation
+- `POST /api/multi-tenant/credential/verify` - Verify credentials within tenant
 
-### 📋 Enhanced Dashboard & Credential Management
+**Admin Interface**:
+- `/admin/multi-tenant` - Multi-tenant administration dashboard
+- Real-time agent health monitoring
+- Enterprise configuration management
+- Interactive operations testing
 
-**Professional Credential Display**:
-- **Complete Verifiable Credential Viewer**: Expandable cards showing full W3C-compliant VC JSON
-- **Smart VC Fallback System**: Creates realistic mock VCs from database data when real VCs unavailable
-- **Interactive Features**: Copy-to-clipboard, JSON formatting, visual indicators for real vs demo VCs
-- **Expiration Management**: Color-coded expiration warnings (red for <7 days, yellow for <30 days)
+## 🔐 Features & SSI System
 
-**Credential Request System**:
-- **User-Friendly Request Form**: Integrated into dashboard with classification level selection
-- **Business Justification Required**: Ensures proper documentation for all requests
-- **Department Approval Workflow**: Optional department approver field
-- **Real-time Feedback**: Success/error messages with automatic dashboard refresh
+### Admin Panel & User Management
 
-### 🎯 Complete SSI Workflow Implementation
+- **Admin Panel**: `/admin` - Complete credential request management
+- **Role-Based Access**: Secure authentication for admin functions
+- **Approval Workflow**: One-click approve/deny with audit trail
+- **Real-time Statistics**: Pending requests, user metrics, activity tracking
 
-**Request → Approval → Issuance Pipeline**:
-1. **User Request**: Submit credential request through dashboard form
-2. **Admin Review**: Admin views request details and business justification
-3. **Approval Decision**: One-click approve/deny with automatic processing
-4. **Credential Issuance**: Automatic creation of issued credential upon approval
-5. **User Notification**: New credential appears in user's dashboard immediately
+### Credential Management
 
-**Credential Types Supported**:
-- **Enterprise Access** (Level 0): Basic enterprise system access
-- **Public Classification** (Level 1): Public document handling permissions
-- **Internal Classification** (Level 2): Internal document access rights
-- **Confidential Classification** (Level 3): Highest security clearance level
+- **W3C-Compliant VCs**: Full Verifiable Credential support
+- **Request System**: Dashboard-integrated credential requests
+- **Business Justification**: Required documentation for requests
+- **Expiration Management**: Color-coded warnings and notifications
 
-### 🔧 Technical Enhancements & Security
+### SSI Workflow
 
-**Authentication System Improvements**:
-- **Working Login Credentials**: All sample users have functional bcrypt-hashed passwords
-- **Identity Hash System**: Cryptographic identity generation using enterprise account salt
-- **Session Management**: Proper user session handling with authentication state
+1. **User Request**: Submit credential request via dashboard
+2. **Admin Review**: Review request with business justification
+3. **Approval Decision**: One-click approve/deny
+4. **Credential Issuance**: Automatic credential creation
+5. **User Notification**: Immediate dashboard update
 
-**Database & API Enhancements**:
-- **Complete CRUD Operations**: Full create, read, update, delete for all credential operations
-- **Audit Logging**: Comprehensive tracking of all system operations for compliance
-- **Error Handling**: Robust error handling with user-friendly messages
-- **Performance Optimization**: Efficient database queries with proper indexing
+**Credential Types**:
+- **Enterprise Access** (Level 0): Basic system access
+- **Public Classification** (Level 1): Public document permissions
+- **Internal Classification** (Level 2): Internal document access
+- **Confidential Classification** (Level 3): Highest security level
 
-### 📱 User Experience & Interface
+## 📋 Login Credentials
 
-**Modern UI Components**:
-- **Responsive Design**: Works seamlessly on desktop and mobile devices
-- **Professional Styling**: Clean, corporate-grade interface with Bootstrap 5
-- **Interactive Elements**: Smooth animations, loading states, and visual feedback
-- **Accessibility**: Proper ARIA labels, keyboard navigation, and screen reader support
-
-**Dashboard Features**:
-- **Real-time Stats**: Live credential counts, document access metrics, security scores
-- **Quick Actions**: Fast access to common operations (upload documents, request credentials)
-- **Recent Activity**: Timeline of user actions and system events
-
-## 🔑 Login Credentials (Updated)
-
-### Admin Users (Full Admin Panel Access)
+### Admin Users
 - **Email**: `admin@company.com`
 - **Password**: `admin123`
-- **Role**: System Administrator
-- **Access**: ✅ Complete admin panel, credential approval, user management
+- **Access**: Full admin panel, credential approval, user management
 
-### Regular Users (Standard Dashboard Access)
-- **John Doe** (Senior Developer)
-  - Email: `john.doe@company.com`
-  - Password: `john123`
-  - Department: Engineering
+### Regular Users
+- **John Doe**: `john.doe@company.com` / `john123` - Engineering
+- **Jane Smith**: `jane.smith@company.com` / `jane123` - Data Science
 
-- **Jane Smith** (Data Scientist)
-  - Email: `jane.smith@company.com` 
-  - Password: `jane123`
-  - Department: Data Science
-
-### Quick Start for Testing
-1. **Login as Admin**: Use admin credentials to access admin panel
-2. **View Pending Requests**: See credential requests from sample users
-3. **Test Approval Process**: Approve/deny requests and see real-time updates
-4. **Switch Users**: Login as regular users to see approved credentials
-5. **Request New Credentials**: Test the complete request → approval workflow
-
-## Architecture Overview
+## Architecture
 
 ### Core Components
 
-1. **Flask Web Application** (`app.py`) - Main web server with HTML templates and REST API endpoints
-2. **Configuration Management** (`config.py`) - Environment-aware configuration using dataclasses with support for development/testing/production environments
-3. **Identus Integration** (`identus_wrapper.py`) - Wrapper for Hyperledger Identus credential operations with auto-detection of GitHub Codespaces vs local environments
-4. **Frontend** (`frontend/`) - HTML templates with Bootstrap UI and vanilla JavaScript
-
-### Application Architecture
-
-**Request Flow**:
-- HTTP requests → Flask routes in `app.py` 
-- Configuration loaded via `config.py` with environment-specific settings
-- Identus operations handled by `identus_wrapper.py` 
-- Templates rendered from `frontend/templates/` with static assets from `frontend/static/`
-- Database operations use raw SQL migrations from `scripts/init-db.sql`
-
-**State Management**:
-- Application data stored in global `applications_db` list (loads from Identus on startup)
-- User session simulated via `current_user` dict (production should implement proper auth)
-- Configuration managed through environment-aware Config class with dataclass sections
-- Real-time Identus integration with fallback to mock data when agents unavailable
+1. **Flask Application** (`app.py`) - Main web server and API endpoints
+2. **Configuration** (`config.py`) - Environment-aware configuration
+3. **Identus Integration** (`identus_wrapper.py`) - Hyperledger Identus wrapper
+4. **Multi-Tenant Manager** (`multi_tenant_identus.py`) - Enterprise routing and isolation
+5. **Frontend** (`frontend/`) - HTML templates with Bootstrap UI
 
 ### Key Directories
 
 - `frontend/templates/` - Jinja2 HTML templates
-  - `base.html` - Main layout with admin navigation
-  - `dashboard.html` - Enhanced user dashboard with VC viewer and request form
-  - `admin/credential-requests.html` - Complete admin panel for credential management
-  - `documents/upload.html` - Document upload interface
+  - `base.html` - Main layout with navigation
+  - `dashboard.html` - User dashboard with credentials
+  - `admin/` - Admin panel templates
+  - `documents/` - Document management interfaces
 - `frontend/static/` - CSS and JavaScript assets  
-- `scripts/` - Database initialization and Identus setup scripts
-- `logs/` - Application and audit logs (created at runtime)
-- `uploads/` - Document storage (created at runtime)
-
-### Key Endpoints & Features
-
-**User Routes**:
-- `/` - Enhanced dashboard with VC viewer and credential request form
-- `/login` - User authentication
-- `/documents/upload` - Document upload with classification
-
-**Admin Routes**:
-- `/admin` - **NEW**: Complete admin panel for credential management
-- `/api/admin/credential-requests/<id>` - **NEW**: Approve/deny credential requests
-
-**API Endpoints**:
-- `/api/credentials/request` - **NEW**: Submit credential requests
-- `/api/identus/status` - Identus system health check
-- `/api/applications` - Legacy application management
+- `scripts/` - Database and agent setup scripts
+- `schemas/` - Credential schema definitions
+- `logs/` - Application and audit logs
+- `uploads/` - Document storage
 
 ### Database Schema
 
-The system uses PostgreSQL with these main tables:
+PostgreSQL tables:
 - `users` - User accounts and profiles
-- `applications` - Credential applications and approval workflow
+- `applications` - Credential applications and workflow
 - `documents` - Classified document metadata
-- `credentials` - Issued Identus credentials tracking
+- `credentials` - Issued credentials tracking
+- `issued_credentials` - Active credential records
 - `audit_logs` - Security and access audit trail
+- `ephemeral_sessions` - Temporary access sessions
 
-### Identus Multi-Agent Integration
+### Identus Multi-Agent System
 
-**COMPLETE SSI SYSTEM**: Full 3-Agent Setup
-- **Issuer Agent** (port 8080) - Issues verifiable credentials to approved data labelers
-- **Holder Agent** (port 7000) - Manages user DIDs and credential wallets
-- **Verifier Agent** (port 9000) - Verifies credentials for access control and document classification
+**3-Agent SSI Setup**:
+- **Issuer Agent** (8080/8090) - Issues verifiable credentials
+- **Holder Agent** (7000/7001) - Manages user DIDs and wallets
+- **Verifier Agent** (9000/9001) - Verifies credentials for access
 
-**Service Endpoints**:
-- **Issuer HTTP**: `http://localhost:8080` | **DIDComm**: `http://localhost:8090`
-- **Holder HTTP**: `http://localhost:7000` | **DIDComm**: `http://localhost:7001`  
-- **Verifier HTTP**: `http://localhost:9000` | **DIDComm**: `http://localhost:9001`
-
-**Infrastructure Requirements**:
-- **PostgreSQL**: Agent-specific databases (`issuer_identus_db`, `holder_identus_db`, `verifier_identus_db`) plus global databases (`pollux`, `connect`, `agent`, `node_db`)
-- **Vault Services**: Individual vault containers for secure key management (ports 8200, 7200, 9200)
-- **Global Users**: `pollux-application-user`, `connect-application-user`, `agent-application-user` required by all agents
-- **Host Networking**: Required for proper agent connectivity and vault communication
-
-Credentials are issued with a custom schema for data labeler certification containing fields like `fullName`, `email`, `specialization`, `experienceLevel`, and `labelerID`.
+**Infrastructure**:
+- PostgreSQL with multiple databases and users
+- HashiCorp Vault for key management
+- Host networking for optimal connectivity
+- Automatic health monitoring and recovery
 
 ## Configuration
 
-### Environment Configuration
+### Environment Variables
 
-The application uses environment-based configuration with three modes:
-- `development` - Local development with SQLite, debug enabled
-- `testing` - In-memory database, minimal logging  
-- `production` - PostgreSQL, security hardening, audit logging
-
-### Key Environment Variables
-
-Copy `.env.example` to `.env` and configure:
-- `FLASK_ENV` - Environment mode (development/testing/production)
-- `DATABASE_URL` - Database connection string (defaults to SQLite for dev, PostgreSQL for production)
-- `SECRET_KEY` / `JWT_SECRET_KEY` - Security keys for sessions/tokens (auto-generated if not provided)
-- `IDENTUS_ISSUER_URL` - Identus issuer agent endpoint (http://localhost:8080/cloud-agent for scripts, http://localhost:8000/cloud-agent for Docker Compose)
-- `IDENTUS_HOLDER_URL` - Holder agent endpoint (http://localhost:7000/cloud-agent for both)
-- `IDENTUS_VERIFIER_URL` - Verifier agent endpoint (http://localhost:9000/cloud-agent for both)
-- `UPLOAD_FOLDER` - Document storage location (defaults to 'uploads')
-- `MAX_FILE_SIZE` - Maximum document upload size (defaults to 100MB)
-- `CODESPACES` - Auto-detected in GitHub Codespaces for environment configuration
-
-**Important**: The `.env.example` file contains comprehensive configuration options with documentation for each setting.
+Key settings in `.env`:
+- `FLASK_ENV` - Environment mode (development/production)
+- `DATABASE_URL` - Database connection string
+- `SECRET_KEY` - Session security key
+- `IDENTUS_ISSUER_URL` - Issuer agent endpoint
+- `IDENTUS_HOLDER_URL` - Holder agent endpoint
+- `IDENTUS_VERIFIER_URL` - Verifier agent endpoint
+- `UPLOAD_FOLDER` - Document storage location
+- `MAX_FILE_SIZE` - Maximum upload size
 
 ### Classification Levels
 
-The system supports three document classification levels:
 - `public` (level 1) - Public access
 - `internal` (level 2) - Internal company use
 - `confidential` (level 3) - Restricted access
 
-### Setup Methods Comparison
+## Development Workflow
 
-The project provides two ways to start Identus agents:
+### Quick Start
 
-**1. Shell Scripts Method** (`./scripts/setup-agents.sh`):
-- **Ports**: Issuer (8080), Holder (7000), Verifier (9000)
-- **Networking**: Uses host networking
-- **Features**: Individual Vault containers, auto-population of databases
-- **Management**: Built-in status and cleanup commands
-- **Recommended for**: Development and testing
-
-**2. Docker Compose Method** (`docker-compose up -d`):
-- **Ports**: Issuer (8000), Holder (7000), Verifier (9000)
-- **Networking**: Uses bridge network
-- **Features**: Integrated with postgres/redis services
-- **Management**: Standard Docker Compose commands
-- **Recommended for**: Quick starts and container orchestration
-
-**Note**: The `.env.example` file shows port 8000 for issuer URL, which matches Docker Compose. Update your `.env` file accordingly based on which method you use.
-
-## Development Workflows
-
-### Starting Development Environment
-
-**Recommended Full-Stack Approach**:
-1. **Setup Database**: `./scripts/setup-database.sh` (includes all required user accounts)
-2. **Setup Identus Agents**: `./scripts/setup-agents.sh` (complete 3-agent SSI system)
-3. **Start Flask App**: `python app.py`
-4. **Access Application**: http://localhost:5000
-5. **Test Admin Panel**: Login as `admin@company.com` / `admin123` → Click "Admin"
-6. **Test User Experience**: Login as `john.doe@company.com` / `john123` → Request credentials
-
-**Alternative Approach** (Database Only):
-1. Start supporting services: `docker-compose up -d postgres redis`
-2. Initialize database: `sudo docker exec -i identus-postgres psql -U postgres -d identus_db < scripts/init-db.sql`
-3. Run Flask app: `python app.py` (basic functionality with mock VCs)
-
-### Database Migrations
-
-The system uses raw SQL migrations in `scripts/init-db.sql`. For schema changes:
-1. Update the SQL script
-2. Restart the PostgreSQL container to apply changes
-3. Or execute SQL manually via `psql`
-
-### Adding New Features
-
-Key patterns to follow:
-- Use environment-aware configuration from `config.py`
-- Add audit logging for security-sensitive operations
-- Follow Flask blueprint patterns for route organization
-- Use the Identus client for credential operations
-- Maintain classification level access controls
-
-### Complete Development Workflow
-
-**1. Initial Setup**:
 ```bash
-# Clone and setup environment
-python -m venv venv && source venv/bin/activate
-pip install -r requirements.txt
-cp .env.example .env  # Edit as needed
-```
-
-**2. Start Infrastructure**:
-```bash
-# Start database with all required databases and users
+# 1. Setup database
 ./scripts/setup-database.sh
 
-# Start complete 3-agent SSI system
+# 2. Start agents
 ./scripts/setup-agents.sh
 
-# Verify all services are healthy
-curl http://localhost:8080/_system/health  # {"version":"1.33.0"}
-curl http://localhost:7000/_system/health  # {"version":"1.33.0"}  
-curl http://localhost:9000/_system/health  # {"version":"1.33.0"}
-```
-
-**3. Run Application**:
-```bash
-# Start Flask application with full SSI capabilities
+# 3. Run application
 python app.py
-# Access at: http://localhost:5000
+
+# 4. Access at http://localhost:5000
 ```
 
-**4. Development Lifecycle**:
+### Management Commands
+
 ```bash
-# Check system status anytime
+# Check system status
 ./scripts/setup-agents.sh status
 
-# Stop everything cleanly
-./scripts/setup-agents.sh cleanup  # Stops agents and vaults
-sudo docker stop identus-postgres  # Stop database when done
+# Stop and cleanup
+./scripts/setup-agents.sh cleanup
 
-# Quick restart
+# Restart agents
 ./scripts/setup-database.sh && ./scripts/setup-agents.sh
 ```
 
-**SSI Development Features Available**:
-- **Full Credential Issuance**: Issue verifiable credentials to approved data labelers
-- **DID Management**: Complete decentralized identifier lifecycle
-- **Verification Workflows**: Verify credentials for document access control
-- **Multi-Agent Interactions**: Test complete issuer→holder→verifier flows
-- **Production Architecture**: Develop against production-equivalent SSI infrastructure
+### Testing
 
-### Testing and Code Quality
-
-**Testing**:
-- No formal testing framework is currently configured (pytest could be added)
+- Health endpoints for service monitoring
 - Manual testing via Flask development server
-- Use health check endpoints for integration testing:
-  - Flask app: `curl http://localhost:5000/health`
-  - Identus agents: `curl http://localhost:8080/_system/health`
-- Test Identus integration via `/api/identus/status` endpoint
-
-**Code Quality**:
-- No linting tools configured (consider adding flake8, black, or pylint)
-- Follow PEP 8 conventions manually
-- Use type hints where appropriate (some files already use typing module)
-- Dependencies managed via `requirements.txt` with pinned versions
-
-**Key Dependencies**:
-- **Flask 2.3.3** - Web framework
-- **SQLAlchemy 2.0.21** - Database ORM (although raw SQL is used currently)
-- **psycopg2-binary 2.9.9** - PostgreSQL adapter
-- **bcrypt 4.0.1** - Password hashing
-- **cryptography 41.0.4** - Encryption operations
-
-### Debugging Identus Issues
-
-**Quick Status Check**:
-```bash
-# Check agent health
-curl http://localhost:8080/_system/health
-
-# Comprehensive status check
-./scripts/check-identus-status.sh
-```
-
-**Common Troubleshooting**:
-- Verify Issuer agent is healthy: `curl http://localhost:8080/_system/health`
-- Check agent initialization status via `/api/identus/status`
-- Use `/api/identus/reinitialize` to reset connection
-- Check Docker container logs: `sudo docker logs issuer-agent`
-- Restart agent: `./scripts/setup-issuer-only.sh`
-
-**Known Issues & Solutions**:
-- **Port conflicts**: Ensure required ports are free (8080/8000, 7000, 9000, 5432 for scripts/Docker Compose respectively)
-- **Slow startup**: Agent can take 30-60 seconds to be ready after container start
-- **Host networking**: Scripts method requires host networking - bridge networks can cause connectivity issues
-- **Multiple databases**: Agents require `pollux`, `connect`, `agent`, `node_db` databases plus agent-specific ones
-- **Vault required**: Scripts method needs individual Vault containers for secure key management
-- **GitHub Codespaces**: System auto-detects Codespaces environment and configures accordingly
-- **Configuration URLs**: Scripts use port 8080 for issuer HTTP, Docker Compose uses 8000
-- **Database connection**: Flask app can run without Identus; only credential operations require working agents
-
-### Troubleshooting Ephemeral DID Issues
-
-**Common Ephemeral DID Problems & Solutions**:
-
-1. **"Failed to generate ephemeral DID" Errors**:
-   - **Cause**: Async initialization timing issues with `EphemeralDIDManager`
-   - **Solution**: Check browser console for `ephemeralDIDManagerReady` event, refresh page if needed
-   - **Debug**: Look for "EphemeralDIDManager initialization" logs in browser console
-
-2. **"Document data not available" / Empty Document Content**:
-   - **Cause**: Incorrect algorithm detection routing to mock content generation
-   - **Solution**: Verify server returns `algorithm: 'DEMO-ORIGINAL-DOCUMENT'` in response
-   - **Debug**: Check browser console for "DEMO MODE detected" vs "hybrid format" routing logs
-
-3. **"Session not found or expired" Errors**:
-   - **Cause**: Session token mismatch or cleanup issues
-   - **Solution**: Clear browser localStorage and regenerate ephemeral DID
-   - **Debug**: Check `localStorage.getItem('ephemeral_did_sessions')` in browser console
-
-4. **"Private key not found - may have been destroyed" Errors**:
-   - **Cause**: Ephemeral keys cleared from memory during session
-   - **Solution**: Regenerate ephemeral DID and create new session
-   - **Debug**: Check `activeDIDPairs` Map in browser console
-
-**Debugging Steps for Ephemeral DID Workflow**:
-
-1. **Browser Console Logs**: Enable verbose logging to trace the complete workflow:
-   ```javascript
-   // Check in browser console
-   window.currentEphemeralSession
-   localStorage.getItem('ephemeral_did_sessions')
-   ```
-
-2. **Network Tab Analysis**: Monitor API calls during document access:
-   - `POST /api/ephemeral/create-session` - Session creation
-   - `GET /api/ephemeral/encrypt-document/<token>` - Document retrieval
-   - Look for `algorithm: 'DEMO-ORIGINAL-DOCUMENT'` in responses
-
-3. **Server-Side Debugging**: Check Flask application logs:
-   ```bash
-   # Look for these log patterns
-   grep "DEMO MODE" logs/app.log
-   grep "ephemeral session" logs/app.log
-   ```
-
-**Expected Workflow Success Indicators**:
-- ✅ "ephemeralDIDManagerReady event fired"
-- ✅ "Ephemeral DID generated successfully"
-- ✅ "Session created successfully" 
-- ✅ "DEMO MODE detected - returning original document directly"
-- ✅ "Decoded original document to binary" with proper byte counts
-
-**Quick Reset for Testing**:
-```bash
-# Clear all ephemeral sessions and restart
-# In browser console:
-localStorage.clear()
-location.reload()
-
-# Or restart Flask app entirely
-pkill -f "python.*app.py"
-source venv/bin/activate && python app.py
-```
+- Admin panel for credential workflow testing
+- Multi-tenant dashboard for enterprise testing
 
 ## Security Considerations
 
-- Document uploads are validated by file type and size
+- Document upload validation by file type and size
 - Classification levels enforce access control
 - All credential operations are audited
-- Secret keys should be rotated regularly
-- Database credentials are managed via environment variables
-- CORS is configured for local development origins
+- Enterprise isolation with tenant-specific wallets
+- API key authentication for enterprise access
+- Session management with expiration handling
 
-## Important Notes
+## Current Implementation Status
 
-### Identus Setup - PROVEN WORKING CONFIGURATION
+### ✅ Working Features
+- Complete multi-tenant architecture
+- Full SSI workflow (request → approval → issuance)
+- Admin panel with approval system
+- Enterprise-based agent routing
+- Document classification system
+- Ephemeral DID sessions
+- W3C-compliant Verifiable Credentials
 
-The current working setup uses:
+### 🚧 Known Limitations
+- DIDComm handshake requires manual connection acceptance
+- Real holder wallet integration pending
+- WebSocket connectivity for real-time messaging not implemented
+- Out-of-band credential delivery in development
 
-1. **Single Issuer Agent**: Only the issuer agent is fully working and tested
-2. **Host Networking**: Docker host networking mode is required
-3. **Multiple PostgreSQL Databases**: `identus_db`, `pollux`, `connect`, `agent`, `node_db`
-4. **Multiple Database Users**: `postgres`, `pollux-application-user`, `connect-application-user`, `agent-application-user`, `identus_user`
-5. **Vault Integration**: HashiCorp Vault in development mode with root token
-6. **Version**: Hyperledger Identus Cloud Agent 1.33.0 (proven stable)
+## Scripts
 
-### Multi-Agent System Architecture
+### Main Startup Script: `start.sh`
+The **primary way to start the entire system**. This comprehensive script handles:
+- ✅ Prerequisites checking (Docker, Python)
+- ✅ Python virtual environment creation and activation
+- ✅ Dependencies installation from requirements.txt
+- ✅ PostgreSQL setup with max_connections=300 (prevents connection exhaustion)
+- ✅ Database schema initialization
+- ✅ Security fixes (proper password hashes, identity hashes)
+- ✅ All 3 Identus agents (Issuer on 8080, Holder on 7000, Verifier on 9000)
+- ✅ Vault services for each agent (ports 8200, 7200, 9200)
+- ✅ Environment configuration (.env file)
+- ✅ Flask application startup
+- ✅ Health checks and status monitoring
 
-**Required Containers**:
-- `identus-postgres` - PostgreSQL with multiple databases and global users
-- `issuer-vault` - Vault in development mode (port 8200)
-- `holder-vault` - Vault in development mode (port 7200)  
-- `verifier-vault` - Vault in development mode (port 9200)
-- `issuer-agent` - Identus Cloud Agent (ports 8080, 8090)
-- `holder-agent` - Identus Cloud Agent (ports 7000, 7001)
-- `verifier-agent` - Identus Cloud Agent (ports 9000, 9001)
+### Supporting Scripts in `./scripts/`:
+- `setup-database.sh` - PostgreSQL setup with all databases
+- `setup-agents.sh` - Complete 3-agent system setup (called by start.sh)
+- `populate-database.sh` - Database initialization
+- `init-db.sql` - Application schema (applied by start.sh)
 
-**Database Structure**:
-- **Agent Databases**: `issuer_identus_db`, `holder_identus_db`, `verifier_identus_db`
-- **Global Databases**: `pollux`, `connect`, `agent`, `node_db`, `identus_db`
-- **Global Users**: `pollux-application-user`, `connect-application-user`, `agent-application-user` 
-- **Agent Users**: `issuer_user`, `holder_user`, `verifier_user`
-
-**Port Allocation**:
-```
-Database:     5432
-Issuer:       8080 (HTTP), 8090 (DIDComm), 8200 (Vault)
-Holder:       7000 (HTTP), 7001 (DIDComm), 7200 (Vault)
-Verifier:     9000 (HTTP), 9001 (DIDComm), 9200 (Vault)
-```
-
-### Script Locations
-
-**Essential Scripts** in `./scripts/`:
-- `setup-database.sh` - **REQUIRED FIRST** - PostgreSQL database setup with health checks
-- `populate-database.sh` - Database population with Identus-specific databases and users
-- `setup-agents.sh` - **MAIN SCRIPT** - Complete Identus agents setup (issuer, holder, verifier)
-- `init-db.sql` - PostgreSQL schema for Flask application tables
-
-**Usage Workflow**:
+### Script Usage Examples:
 ```bash
-# 1. Setup database first (required)
+# RECOMMENDED: Use start.sh for everything
+./start.sh              # Complete setup and start
+./start.sh quick        # Start Flask app only (faster for restarts)
+./start.sh status       # Check what's running
+./start.sh cleanup      # Stop everything
+
+# Manual approach (if needed)
 ./scripts/setup-database.sh
-
-# 2. Setup all Identus agents (issuer, holder, verifier)
 ./scripts/setup-agents.sh
+python app.py
 
-# Management commands
+# Agent management
 ./scripts/setup-agents.sh status         # Check current status
 ./scripts/setup-agents.sh cleanup        # Stop and remove all agents
 ```
-
-**What Each Script Does**:
-- `setup-database.sh`: Creates PostgreSQL container with health checks and basic database setup
-- `populate-database.sh`: Creates all agent databases, global users, and grants proper privileges automatically
-- `setup-agents.sh`: **COMPLETE SSI SYSTEM** - Starts all 3 agents with dedicated vaults, includes global user validation
-- `init-db.sql`: PostgreSQL schema for Flask application tables (users, applications, documents, credentials, audit_logs)
-
-**Advanced Features**:
-- **Auto-Detection**: Scripts automatically detect missing global users and run population as needed
-- **Error Recovery**: Built-in validation and self-healing capabilities
-- **Health Monitoring**: Comprehensive health checks for all services with retry logic
-- **Status Reporting**: Detailed status information for troubleshooting and monitoring
-
-## 🔧 Recent Fixes & Development Mode Enhancements
-
-### ✅ **Fixed Ephemeral DID Generation Issues** (2025-08-09)
-
-**Problem**: "❌ Failed to generate ephemeral DID" error during VC creation due to async initialization timing issues.
-
-**Solution Implemented**:
-- **Fixed Async Initialization**: Modified `EphemeralDIDClient` to properly wait for `EphemeralDIDManager` initialization
-- **Added Event-Based Synchronization**: Uses `ephemeralDIDManagerReady` event with 3-second timeout fallback
-- **Fixed Data Structure Mismatch**: Corrected return format from `generateEphemeralDIDKey()` to include required `success`, `did`, and `publicKey` properties
-- **Improved Error Handling**: Returns `{success: false, error: "..."}` instead of throwing exceptions
-- **Fixed Method Signatures**: Added missing `documentId` parameter to `generateEphemeralDIDKey()` calls
-
-**Files Modified**:
-- `frontend/static/js/ephemeral-did.js` - Fixed initialization timing and data structure
-- `frontend/static/js/identus-client.js` - Corrected return formats and error handling
-
-### ✅ **Fixed Document Download Issues** (2025-08-09)
-
-**Problem**: "Document data not available" error when trying to download documents after ephemeral access.
-
-**Solution Implemented**:
-- **Fixed Data Structure Mismatch**: The `decryptDocumentWithEphemeralKey()` function returned `documentData` but download functions expected `content`
-- **Updated Download Functions**: Modified both `downloadDocument()` and `viewDocument()` to use correct property name
-- **Preserved Backward Compatibility**: Maintained all existing functionality while fixing the property access
-
-**Files Modified**:
-- `frontend/templates/documents/access-with-ephemeral.html:661-662` - Fixed blob creation to use `documentData` instead of `content`
-
-### ✅ **Fixed Session Creation Errors** (2025-08-09)
-
-**Problem**: "Failed to create ephemeral access session" due to database connection and schema mismatches.
-
-**Solution Implemented**:
-- **Database Connection Fix**: Updated `get_db_connection()` to handle both SQLite and PostgreSQL based on configuration
-- **Added Database Type Detection**: Created `is_sqlite()` and `get_param_placeholder()` helper functions
-- **Development Mode Bypass**: Implemented temporary session creation bypass for SQLite/development environments
-- **Relaxed DID Validation**: Simplified strict cryptographic validation for development testing
-- **Fixed Port Configuration**: Resolved Flask port conflicts to ensure consistent operation on port 5000
-
-**Files Modified**:
-- `app.py:53-83` - Enhanced database connection handling
-- `app.py:2730-2751` - Added development mode session creation
-
-### ✅ **Fixed John Doe Account & Dashboard Issues** (2025-08-09)
-
-**Problem**: John Doe couldn't see issued documents and credentials on the main dashboard page.
-
-**Solution Implemented**:
-
-**Authentication System Fixes**:
-- **Development Mode Authentication**: Added SQLite/development bypass for user login
-- **Mock User Profiles**: Created realistic user data for John Doe, Jane Smith, and Admin accounts
-- **Session Management**: Fixed missing `identity_hash_display` field requirements
-- **Credential Validation**: Added proper authentication state handling
-
-**Dashboard Data Display Fixes**:
-- **Mock Credentials**: Created realistic issued credentials (Enterprise + Public Classification) with full W3C-compliant VCs
-- **Statistics Display**: Added proper credential counts, document access metrics, security scores
-- **Recent Activities**: Implemented timeline of credential events and system interactions
-- **Interactive Features**: Full VC viewer with JSON export, copy-to-clipboard, expiration warnings
-
-**Files Modified**:
-- `app.py:697-822` - Added development mode dashboard with mock data
-- `app.py:1199-1263` - Implemented authentication bypass for development accounts
-
-### 🔧 **Development Mode Features**
-
-The system now includes comprehensive development mode functionality when using SQLite:
-
-**✅ Working Login Credentials**:
-- **John Doe**: `john.doe@company.com` / `john123` - Shows 2 credentials (Enterprise + Public)
-- **Jane Smith**: `jane.smith@company.com` / `jane123` - Shows 1 credential (Enterprise)
-- **Admin**: `admin@company.com` / `admin123` - Shows 4 credentials (All levels) + Admin panel access
-
-**✅ Mock Data Features**:
-- **Realistic Credential VCs**: Full W3C-compliant Verifiable Credentials with proper schemas
-- **Interactive Dashboard**: Live statistics, recent activity timeline, credential request forms
-- **Ephemeral DID Workflow**: Complete end-to-end ephemeral document access simulation
-- **Session Management**: Proper session creation, expiration handling, and cleanup
-
-**✅ Database Compatibility**:
-- **Dual Database Support**: Seamless switching between PostgreSQL (production) and SQLite (development)
-- **Automatic Detection**: System automatically detects database type and adjusts behavior
-- **Fallback Mechanisms**: Graceful degradation when database schemas are unavailable
-
-### ✅ **Fixed Document Decryption & Content Access Issues** (2025-08-10)
-
-**Problem**: "HasDocumentData=false, Length=0" error when accessing documents through ephemeral DID system. The client was receiving valid tokens but returning empty document content with mock text instead of actual document data.
-
-**Root Cause**: The `EphemeralDIDManager` was incorrectly detecting the server's DEMO mode response as a "hybrid ECIES format" due to the presence of `encryptedDocument` and `encryptedKey` fields, routing to `decryptHybridECIESFormatDirect()` which created mock content instead of processing the actual document.
-
-**Solution Implemented**:
-- **Priority Routing Fix**: Added DEMO mode detection as highest priority in `decryptHybridECIESFormatDirect()` method
-- **Proper Algorithm Detection**: Ensured `algorithm: 'DEMO-ORIGINAL-DOCUMENT'` is checked before hybrid format detection
-- **Binary Data Processing**: Implemented proper base64 decoding and conversion to `Uint8Array` for document handling
-- **Dual Method Updates**: Fixed both the general `decryptWithPrivateKey` and `EphemeralDIDManager`'s specific decryption methods
-- **Parameter Structure Fix**: Modified `ephemeral-did.js` to pass full response object instead of just `encryptedDocument` field
-
-**Files Modified**:
-- `frontend/static/js/identus-client.js:406-442` - Added DEMO mode detection to `decryptHybridECIESFormatDirect()`
-- `frontend/static/js/identus-client.js:517-518` - Prioritized DEMO mode check before hybrid format detection
-- `frontend/static/js/ephemeral-did.js:439-443` - Fixed parameter passing to include algorithm field
-
-**Result**: ✅ Complete ephemeral document access workflow now functional with actual document content being returned for download/viewing
-
-### 🚀 **Current Status** (2025-08-10)
-
-- **✅ Application URL**: http://localhost:5000
-- **✅ All Core Features Working**: Authentication, dashboard, credentials display, ephemeral DID generation
-- **✅ Session Creation**: Ephemeral access sessions successfully created
-- **✅ Document Access**: Complete ephemeral document access workflow functional with actual document content
-- **✅ Document Decryption**: Fixed all document content access issues - now returns real document data
-- **✅ VC Creation**: Fixed all ephemeral DID generation errors
-- **✅ User Experience**: John Doe account shows proper credentials and dashboard data
-
-### Complete Multi-Agent SSI System
-
-The scripts provide a full Self-Sovereign Identity infrastructure:
-
-1. **Production-Ready Architecture**: Complete issuer-holder-verifier triangle for full SSI workflows
-2. **Robust Database Management**: Automatic creation of all required databases and global users that agents expect
-3. **Sequential Startup**: Agents start individually to prevent database initialization conflicts
-4. **Comprehensive Health Monitoring**: Multi-level health checks for agents, vaults, and database connectivity
-5. **Host Network Optimization**: Uses proven host networking for optimal performance and connectivity
-6. **Automatic Error Recovery**: Scripts detect missing users/databases and auto-populate as needed
-7. **Easy Management**: Simple commands for complete system lifecycle management
-
-**Key Features**:
-- **3-Agent Setup**: Full SSI triangle (issuer → holder ← verifier)
-- **Isolated Vault Security**: Each agent has dedicated vault for key management
-- **Global User Management**: Automatically creates `pollux-application-user`, `connect-application-user`, `agent-application-user`  
-- **Self-Healing**: Detects configuration issues and automatically runs population scripts
-- **Production Ready**: Suitable for development, testing, and production deployments

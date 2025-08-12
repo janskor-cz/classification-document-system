@@ -23,6 +23,7 @@ from psycopg2.extras import RealDictCursor
 # Import our configuration and Identus integration
 from config import get_config, get_flask_config
 from identus_wrapper import identus_client
+from multi_tenant_identus import multi_tenant_client
 from document_encryption import ephemeral_encryption, encrypt_document_for_ephemeral_session
 from classification_manager import ClassificationManager
 from ephemeral_session_manager import EphemeralSessionManager
@@ -730,7 +731,7 @@ def dashboard():
                             'status': cred['status']
                         }
                         
-                        # Fetch the actual VC from Identus if available, otherwise create mock
+                        # Fetch the actual VC from Identus if available
                         vc_data = None
                         if cred.get('identus_record_id'):
                             try:
@@ -738,29 +739,19 @@ def dashboard():
                                 identus_client = IdentusDashboardClient()
                                 vc_data = identus_client.get_verifiable_credential(cred['identus_record_id'])
                                 
-                                # If no real VC found, create a mock from database data
-                                if vc_data is None:
-                                    vc_data = identus_client.create_mock_vc_from_database(credential_display)
-                                    print(f"📋 Created mock VC for {cred['identus_record_id']}")
-                                else:
+                                if vc_data:
                                     print(f"✅ Retrieved real VC for {cred['identus_record_id']}")
+                                else:
+                                    print(f"ℹ️ No VC available for {cred['identus_record_id']}")
                                     
                             except Exception as e:
                                 print(f"⚠️ Could not fetch VC for {cred['identus_record_id']}: {e}")
-                                # Fallback to creating mock VC from database data
-                                try:
-                                    from identus_wrapper import IdentusDashboardClient
-                                    identus_client = IdentusDashboardClient()
-                                    vc_data = identus_client.create_mock_vc_from_database(credential_display)
-                                    print(f"📋 Created fallback mock VC due to error")
-                                except Exception as mock_error:
-                                    print(f"❌ Could not create mock VC: {mock_error}")
-                                    vc_data = {"error": f"Could not fetch or create VC: {str(e)}"}
+                                vc_data = None
                         
                         # Add VC data to credential display
                         credential_display['verifiable_credential'] = vc_data
                         
-                        # If we have a mock VC with expiration date, use it for display
+                        # If we have a VC with expiration date, use it for display
                         if vc_data and vc_data.get('expirationDate') and not credential_display.get('expires_at'):
                             try:
                                 credential_display['expires_at'] = datetime.fromisoformat(vc_data['expirationDate'].replace('Z', '+00:00'))
@@ -771,7 +762,8 @@ def dashboard():
                         credentials.append(credential_display)
                         print(f"📋 Credentials list now has {len(credentials)} items")
                     
-                    # Get document count (documents user can access)
+                    # Get document count (documents user can access based on classification level only)
+                    # SECURITY: Classification credentials supersede document ownership
                     cursor.execute("""
                         SELECT COUNT(*) as doc_count
                         FROM documents d
@@ -783,8 +775,7 @@ def dashboard():
                             AND status = 'issued'
                             AND (expires_at IS NULL OR expires_at > NOW())
                         )
-                        OR d.created_by_identity_hash = %s
-                    """, (current_user_data.get('identity_hash'), current_user_data.get('identity_hash')))
+                    """, (current_user_data.get('identity_hash'),))
                     
                     doc_result = cursor.fetchone()
                     stats['documents_accessed'] = doc_result['doc_count'] if doc_result else 0
@@ -1045,7 +1036,8 @@ def browse_documents():
         if conn:
             try:
                 with conn.cursor() as cursor:
-                    # Get documents the user can access based on their classification level
+                    # Get documents the user can access ONLY based on their classification level
+                    # SECURITY: Classification credentials supersede document ownership
                     cursor.execute("""
                         SELECT d.id, d.title, d.filename, d.classification_level, 
                                d.classification_label, d.file_size, d.created_at,
@@ -1060,9 +1052,8 @@ def browse_documents():
                             AND status = 'issued'
                             AND (expires_at IS NULL OR expires_at > NOW())
                         )
-                        OR d.created_by_identity_hash = %s
                         ORDER BY d.created_at DESC
-                    """, (current_user_data.get('identity_hash'), current_user_data.get('identity_hash')))
+                    """, (current_user_data.get('identity_hash'),))
                     
                     rows = cursor.fetchall()
                     
@@ -1120,6 +1111,27 @@ def is_admin_user(user):
     return (user_email in admin_emails or 
             user_job_title in admin_job_titles or
             'admin' in user_email.lower())
+
+@app.route('/admin/multi-tenant')
+def admin_multi_tenant():
+    """Multi-tenant Identus administration panel"""
+    try:
+        # Check if user is authenticated and has admin privileges
+        if not current_user.get('is_authenticated'):
+            return redirect(url_for('login'))
+            
+        if not is_admin_user(current_user):
+            flash('Access denied. Admin privileges required.', 'error')
+            return redirect(url_for('dashboard'))
+            
+        print(f"✅ Multi-tenant admin access granted to {current_user.get('email')}")
+        
+        return render_template('admin/multi-tenant.html', current_user=current_user)
+        
+    except Exception as e:
+        print(f"❌ Error in multi-tenant admin panel: {e}")
+        flash('Error loading multi-tenant admin panel. Please try again.', 'error')
+        return redirect(url_for('dashboard'))
 
 @app.route('/admin')
 def admin_panel():
@@ -1342,18 +1354,15 @@ def auth_login():
 def register():
     """User registration page with enterprise account selection"""
     if request.method == 'GET':
-        # Get available enterprise accounts
-        conn = get_db_connection()
+        # Use our multi-tenant enterprise configurations
+        from multi_tenant_identus import multi_tenant_client
+        
         enterprise_accounts = []
-        if conn:
-            try:
-                with conn.cursor() as cursor:
-                    cursor.execute("SELECT account_name, account_display_name FROM enterprise_accounts WHERE is_active = true ORDER BY account_display_name")
-                    enterprise_accounts = [dict(account) for account in cursor.fetchall()]
-            except Exception as e:
-                print(f"❌ Error loading enterprise accounts: {e}")
-            finally:
-                conn.close()
+        for enterprise_name, config in multi_tenant_client.enterprises.items():
+            enterprise_accounts.append({
+                'account_name': enterprise_name,
+                'account_display_name': config.account_display_name
+            })
         
         return render_template('register.html', enterprise_accounts=enterprise_accounts)
     
@@ -1381,12 +1390,16 @@ def register():
                 flash('Password must be at least 8 characters long', 'error')
                 return redirect(url_for('register'))
             
-            # Create user account
-            result = create_user_account(email, password, full_name, enterprise_account, 
-                                       department, job_title, employee_id)
+            # Create enterprise user with credential
+            result = create_enterprise_user_with_credential(email, password, full_name, enterprise_account, 
+                                                          department, job_title, employee_id)
             
             if result['success']:
-                flash(f'Account created successfully! You can now log in.', 'success')
+                # Enhanced success message with enterprise info
+                enterprise_info = f"Enterprise: {result.get('enterprise_display_name', enterprise_account)}"
+                credential_info = "Basic enterprise credential issued!" if result.get('credential_issued') else "Basic credential will be issued upon login."
+                
+                flash(f'Account created successfully! {enterprise_info}. {credential_info} You can now log in.', 'success')
                 return redirect(url_for('login'))
             else:
                 flash(result['error'], 'error')
@@ -1403,6 +1416,172 @@ def auth_logout():
     clear_current_user()
     flash('You have been logged out', 'info')
     return redirect(url_for('login'))
+
+def create_enterprise_user_with_credential(email: str, password: str, full_name: str, 
+                                          enterprise_account_name: str = "DEFAULT_ENTERPRISE",
+                                          department: str = None, job_title: str = None, 
+                                          employee_id: str = None) -> dict:
+    """Create new enterprise user and issue basic credential"""
+    try:
+        from multi_tenant_identus import multi_tenant_client
+        from new_credential_issuer import new_credential_issuer
+        from holder_wallet_manager import holder_wallet_manager
+        import hashlib
+        
+        print(f"🏢 Creating enterprise user for {enterprise_account_name}")
+        print(f"👤 User: {full_name} ({email})")
+        
+        # Validate enterprise account
+        if enterprise_account_name not in multi_tenant_client.enterprises:
+            return {'success': False, 'error': f'Enterprise account {enterprise_account_name} not found'}
+        
+        # Generate enterprise-specific identity hash (consistent with login)
+        identity_hash = generate_identity_hash(email, password, enterprise_account_name)
+        
+        # Hash password
+        password_hash = hash_password(password)
+        
+        # Create user info dictionary
+        user_info = {
+            'email': email,
+            'full_name': full_name,
+            'department': department or 'Unknown',
+            'job_title': job_title or 'Employee',
+            'employee_id': employee_id or f"EMP-{identity_hash[:8].upper()}",
+            'enterprise_account': enterprise_account_name,
+            'identity_hash': identity_hash,
+            'password_hash': password_hash
+        }
+        
+        # Set enterprise context for credential issuance
+        if not multi_tenant_client.set_enterprise_context(enterprise_account_name):
+            print(f"⚠️ Could not set enterprise context, using fallback")
+        
+        # Get enterprise configuration
+        enterprise_config = multi_tenant_client.enterprises[enterprise_account_name]
+        basic_classification = enterprise_config.classification_levels[0] if enterprise_config.classification_levels else 'public'
+        
+        print(f"🎯 Issuing {basic_classification} credential for {enterprise_account_name}")
+        
+        # Initialize credential issuer if needed
+        if not new_credential_issuer.issuer_did or not new_credential_issuer.schema_id:
+            print("🔧 Initializing credential issuer...")
+            if not new_credential_issuer.initialize():
+                print("⚠️ Credential issuer initialization failed, proceeding without")
+        
+        # Issue basic enterprise credential
+        credential_result = None
+        try:
+            # Try multi-tenant first
+            credential_result = multi_tenant_client.issue_enterprise_credential(
+                identity_hash, user_info, basic_classification
+            )
+            
+            if not credential_result.get('success'):
+                raise Exception("Multi-tenant credential issuance failed")
+                
+        except Exception as mt_error:
+            print(f"⚠️ Multi-tenant issuance failed: {mt_error}")
+            try:
+                # Fallback to new credential issuer
+                credential_result = new_credential_issuer.issue_classification_credential(
+                    user_info, basic_classification
+                )
+            except Exception as fallback_error:
+                print(f"⚠️ Fallback credential issuance failed: {fallback_error}")
+                credential_result = {
+                    'success': False,
+                    'error': str(fallback_error)
+                }
+        
+        # Save user to database (for login persistence)
+        conn = get_db_connection()
+        user_id = None
+        
+        if conn:
+            try:
+                with conn.cursor() as cursor:
+                    # Check if user already exists
+                    cursor.execute("SELECT id FROM users WHERE email = %s", (email,))
+                    if cursor.fetchone():
+                        return {'success': False, 'error': 'User already exists'}
+                    
+                    # Get enterprise account ID
+                    cursor.execute("SELECT id FROM enterprise_accounts WHERE account_name = %s", (enterprise_account_name,))
+                    enterprise_row = cursor.fetchone()
+                    if not enterprise_row:
+                        return {'success': False, 'error': f'Enterprise account {enterprise_account_name} not found in database'}
+                    enterprise_account_id = enterprise_row['id']
+                    
+                    # Create user in database
+                    cursor.execute("""
+                        INSERT INTO users (email, password_hash, enterprise_account_id, enterprise_account_name, 
+                                         identity_hash, full_name, department, job_title, employee_id)
+                        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+                        RETURNING id
+                    """, (email, password_hash, enterprise_account_id, enterprise_account_name, 
+                          identity_hash, full_name, department, job_title, employee_id))
+                    
+                    result = cursor.fetchone()
+                    if result:
+                        user_id = result['id']
+                        print(f"✅ User saved to database with ID: {user_id}")
+                    conn.commit()
+                    
+            except Exception as db_error:
+                print(f"❌ Database save failed: {db_error}")
+                if conn:
+                    conn.rollback()
+                return {'success': False, 'error': f'Database save failed: {str(db_error)}'}
+            finally:
+                if conn:
+                    conn.close()
+        else:
+            return {'success': False, 'error': 'Database connection failed'}
+        
+        # Create holder DID for the user
+        print(f"🔑 Creating holder DID for user {user_id}...")
+        holder_did = holder_wallet_manager.create_user_did(user_id, identity_hash)
+        
+        if holder_did:
+            print(f"✅ Created holder DID for user {user_id}")
+            # Store holder DID in database
+            conn = get_db_connection()
+            if conn:
+                try:
+                    with conn.cursor() as cursor:
+                        cursor.execute("""
+                            UPDATE users 
+                            SET holder_did = %s 
+                            WHERE id = %s
+                        """, (holder_did, user_id))
+                    conn.commit()
+                    print(f"✅ Stored holder DID in database")
+                except Exception as e:
+                    print(f"⚠️ Could not store holder DID: {e}")
+                finally:
+                    if conn:
+                        conn.close()
+        else:
+            print(f"⚠️ Could not create holder DID for user {user_id}")
+        
+        return {
+            'success': True,
+            'user_id': user_id,
+            'identity_hash': identity_hash,
+            'enterprise_account': enterprise_account_name,
+            'enterprise_display_name': enterprise_config.account_display_name,
+            'tenant_id': enterprise_config.tenant_id,
+            'classification_levels': enterprise_config.classification_levels,
+            'credential_issued': credential_result.get('success', False),
+            'credential_info': credential_result if credential_result else None,
+            'basic_classification': basic_classification,
+            'message': f'Enterprise user created successfully for {enterprise_config.account_display_name}'
+        }
+        
+    except Exception as e:
+        print(f"❌ Enterprise user creation failed: {e}")
+        return {'success': False, 'error': str(e)}
 
 @app.route('/api/user/profile')
 def get_user_profile():
@@ -1741,25 +1920,17 @@ def approve_application(app_id):
             
         except Exception as identus_error:
             print(f"⚠️ Real credential issuance failed: {identus_error}")
-            print("📋 Falling back to mock credential...")
+            print(f"🔍 Full error details: {str(identus_error)}")
+            print("❌ MOCK CREDENTIALS DISABLED - Re-raising error for debugging...")
             
-            # Fall back to mock credential
-            app['status'] = 'approved'
-            app['approvedDate'] = datetime.now().isoformat()
-            app['processedBy'] = 'mock-system'
-            app['realCredential'] = False
-            
+            # TEMPORARILY DISABLED: Mock credential fallback
+            # Instead, return the actual error to see what's failing
             return jsonify({
-                'success': True,
-                'message': f'Mock credential issued to {app["name"]} (Identus unavailable)',
-                'credential': {
-                    'credentialId': f'mock-cred-{int(datetime.now().timestamp())}',
-                    'invitationUrl': f'mock://credential/{app_id}',
-                    'recordId': f'mock-rec-{int(datetime.now().timestamp())}'
-                },
-                'type': 'mock',
-                'warning': 'Real Identus system unavailable - using mock credential'
-            })
+                'success': False,
+                'error': f'Identus credential issuance failed: {str(identus_error)}',
+                'type': 'identus_error',
+                'details': str(identus_error)
+            }), 500
         
     except Exception as e:
         print(f"❌ Application approval failed: {e}")
@@ -2149,6 +2320,12 @@ def handle_document_upload():
         # Get user's classification level for database storage
         user_classification_level = get_user_max_classification_level(current_user.get('identity_hash', ''))
         classification_level = config.get_classification_level(classification)
+        
+        # SECURITY CHECK: Validate user can upload at requested classification level
+        if user_classification_level < classification_level:
+            flash(f'Access denied: You need {classification} classification credentials to upload {classification} documents. Your maximum level: {user_classification_level}', 'error')
+            os.remove(filepath)  # Delete uploaded file
+            return redirect(url_for('upload_document'))
         
         # Store document in database
         conn = get_db_connection()
@@ -3316,6 +3493,202 @@ def filesize_filter(value):
         return f"{size:.1f} TB"
     except:
         return value
+
+# ==================== MULTI-TENANT IDENTUS API ROUTES ====================
+
+@app.route('/api/multi-tenant/agents/status')
+def multi_tenant_agents_status():
+    """Get status of all multi-tenant Identus agents"""
+    try:
+        status = multi_tenant_client.get_agent_status()
+        return jsonify({
+            'success': True,
+            'agent_status': status,
+            'timestamp': datetime.now().isoformat()
+        })
+    except Exception as e:
+        return jsonify({
+            'success': False,
+            'error': str(e)
+        }), 500
+
+@app.route('/api/multi-tenant/enterprises/status')
+def multi_tenant_enterprises_status():
+    """Get status of all enterprise configurations"""
+    try:
+        status = multi_tenant_client.get_enterprise_status()
+        return jsonify({
+            'success': True,
+            'enterprise_status': status,
+            'timestamp': datetime.now().isoformat()
+        })
+    except Exception as e:
+        return jsonify({
+            'success': False,
+            'error': str(e)
+        }), 500
+
+@app.route('/api/multi-tenant/enterprise/set', methods=['POST'])
+def set_enterprise_context():
+    """Set enterprise context for multi-tenant operations"""
+    try:
+        data = request.get_json()
+        enterprise_account = data.get('enterprise_account')
+        
+        if not enterprise_account:
+            return jsonify({
+                'success': False,
+                'error': 'Missing enterprise_account parameter'
+            }), 400
+        
+        success = multi_tenant_client.set_enterprise_context(enterprise_account)
+        
+        if success:
+            return jsonify({
+                'success': True,
+                'enterprise_account': enterprise_account,
+                'current_agent': multi_tenant_client.current_agent.name if multi_tenant_client.current_agent else None,
+                'tenant_id': multi_tenant_client.current_enterprise.tenant_id if multi_tenant_client.current_enterprise else None
+            })
+        else:
+            return jsonify({
+                'success': False,
+                'error': f'Failed to set enterprise context for {enterprise_account}'
+            }), 500
+            
+    except Exception as e:
+        return jsonify({
+            'success': False,
+            'error': str(e)
+        }), 500
+
+@app.route('/api/multi-tenant/credential/issue', methods=['POST'])
+def issue_multi_tenant_credential():
+    """Issue credential using multi-tenant architecture"""
+    try:
+        data = request.get_json()
+        
+        # Required parameters
+        identity_hash = data.get('identity_hash')
+        enterprise_account = data.get('enterprise_account')
+        credential_type = data.get('credential_type')
+        user_info = data.get('user_info', {})
+        
+        if not all([identity_hash, enterprise_account, credential_type]):
+            return jsonify({
+                'success': False,
+                'error': 'Missing required parameters: identity_hash, enterprise_account, credential_type'
+            }), 400
+        
+        # Set enterprise context
+        context_set = multi_tenant_client.set_enterprise_context(enterprise_account)
+        if not context_set:
+            return jsonify({
+                'success': False,
+                'error': f'Failed to set enterprise context for {enterprise_account}'
+            }), 500
+        
+        # Issue credential
+        result = multi_tenant_client.issue_enterprise_credential(
+            identity_hash, user_info, credential_type
+        )
+        
+        return jsonify(result)
+        
+    except Exception as e:
+        return jsonify({
+            'success': False,
+            'error': str(e)
+        }), 500
+
+@app.route('/api/multi-tenant/credential/verify', methods=['POST'])
+def verify_multi_tenant_credential():
+    """Verify credential using multi-tenant architecture"""
+    try:
+        data = request.get_json()
+        
+        # Required parameters
+        identity_hash = data.get('identity_hash')
+        enterprise_account = data.get('enterprise_account')
+        credential_type = data.get('credential_type')
+        
+        if not all([identity_hash, enterprise_account, credential_type]):
+            return jsonify({
+                'success': False,
+                'error': 'Missing required parameters: identity_hash, enterprise_account, credential_type'
+            }), 400
+        
+        # Set enterprise context
+        context_set = multi_tenant_client.set_enterprise_context(enterprise_account)
+        if not context_set:
+            return jsonify({
+                'success': False,
+                'error': f'Failed to set enterprise context for {enterprise_account}'
+            }), 500
+        
+        # Verify credential
+        result = multi_tenant_client.verify_enterprise_credential(
+            identity_hash, credential_type
+        )
+        
+        return jsonify(result)
+        
+    except Exception as e:
+        return jsonify({
+            'success': False,
+            'error': str(e)
+        }), 500
+
+@app.route('/api/multi-tenant/test/connectivity')
+def test_multi_tenant_connectivity():
+    """Test connectivity to all configured agents across enterprises"""
+    try:
+        # Test all agents and enterprises
+        agent_status = multi_tenant_client.get_agent_status()
+        enterprise_status = multi_tenant_client.get_enterprise_status()
+        
+        # Test connectivity to each enterprise's preferred agent
+        connectivity_results = {}
+        
+        for enterprise_name, enterprise_info in enterprise_status['enterprises'].items():
+            try:
+                # Set enterprise context
+                context_set = multi_tenant_client.set_enterprise_context(enterprise_name)
+                
+                if context_set:
+                    # Try to make a simple request
+                    response = multi_tenant_client._make_request('GET', '/_system/health')
+                    connectivity_results[enterprise_name] = {
+                        'success': True,
+                        'agent_used': multi_tenant_client.current_agent.name,
+                        'tenant_id': multi_tenant_client.current_enterprise.tenant_id,
+                        'response': response
+                    }
+                else:
+                    connectivity_results[enterprise_name] = {
+                        'success': False,
+                        'error': 'Failed to set enterprise context'
+                    }
+                    
+            except Exception as e:
+                connectivity_results[enterprise_name] = {
+                    'success': False,
+                    'error': str(e)
+                }
+        
+        return jsonify({
+            'success': True,
+            'agent_status': agent_status,
+            'enterprise_status': enterprise_status,
+            'connectivity_results': connectivity_results,
+            'timestamp': datetime.now().isoformat()
+        })
+        
+    except Exception as e:
+        return jsonify({
+            'success': False,
+            'error': str(e)
+        }), 500
 
 # ==================== STARTUP ====================
 

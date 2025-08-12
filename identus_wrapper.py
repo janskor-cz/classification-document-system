@@ -26,20 +26,17 @@ class IdentusDashboardClient:
     """Enhanced Identus client for GitHub Codespaces and local development"""
     
     def __init__(self):
-        # Auto-detect environment and configure URLs
+        # Use environment variables with fallbacks
+        self.issuer_url = os.getenv('IDENTUS_ISSUER_URL', 'http://localhost:8080')
+        self.holder_url = os.getenv('IDENTUS_HOLDER_URL', 'http://localhost:7000')  
+        self.verifier_url = os.getenv('IDENTUS_VERIFIER_URL', 'http://localhost:9000')
+        
+        # Auto-detect environment for bridge IP
         if os.getenv('CODESPACES'):
             print("🌐 Detected GitHub Codespaces environment")
-            # In Codespaces, use localhost with port forwarding
-            self.issuer_url = "http://localhost:8080"
-            self.holder_url = "http://localhost:7000"
-            self.verifier_url = "http://localhost:9000"
             self.bridge_ip = "127.0.0.1"
         else:
             print("🏠 Detected local development environment")
-            # Local development configuration
-            self.issuer_url = "http://localhost:8080"
-            self.holder_url = "http://localhost:7000"
-            self.verifier_url = "http://localhost:9000"
             self.bridge_ip = "172.17.0.1"
         
         # Initialize connection state
@@ -70,10 +67,8 @@ class IdentusDashboardClient:
                 self.issuer_did = existing_did
                 print(f"✅ Using existing Issuer DID")
             else:
-                print("⚠️ No existing DID found. Using development mode.")
-                # In development, we can use a mock DID or skip DID operations
-                self.issuer_did = "did:prism:development-mode-did"
-                print("✅ Using development mode DID")
+                print("⚠️ No existing DID found. Identus agents may not be properly initialized.")
+                self.issuer_did = None
             
             # Get existing schema (avoid creating new ones)
             self.schema_uri = self._get_schema_uri_graceful()
@@ -82,12 +77,10 @@ class IdentusDashboardClient:
             return True
             
         except Exception as e:
-            print(f"⚠️ Identus initialization with limited functionality: {e}")
-            # Set development mode defaults
-            self.issuer_did = "did:prism:development-mode-did" 
-            self.schema_uri = "http://localhost:8080/schemas/development-schema"
-            print("✅ Running in development mode with mock DIDs")
-            return True  # Return True to continue with limited functionality
+            print(f"⚠️ Identus initialization failed: {e}")
+            self.issuer_did = None
+            self.schema_uri = None
+            return False  # Return False to indicate initialization failed
     
     def _make_request(self, base_url: str, method: str, endpoint: str, data: Optional[Dict] = None) -> Dict:
         """Make HTTP request to Identus API with enhanced error handling"""
@@ -119,13 +112,19 @@ class IdentusDashboardClient:
             raise Exception(f"Cannot connect to service - {url}")
         except requests.exceptions.HTTPError as e:
             print(f"🚫 HTTP error {e.response.status_code} for {url}")
+            error_text = "No error details"
             if hasattr(e, 'response') and e.response is not None:
                 try:
                     error_detail = e.response.json()
+                    error_text = str(error_detail)
                     print(f"Error details: {error_detail}")
+                    # Write to file for debugging
+                    with open('/tmp/identus_error.log', 'w') as f:
+                        f.write(f"URL: {url}\nError: {error_detail}\nData sent: {data}\n")
                 except:
+                    error_text = e.response.text
                     print(f"Error response: {e.response.text}")
-            raise Exception(f"HTTP {e.response.status_code} error")
+            raise Exception(f"HTTP {e.response.status_code} error: {error_text[:200]}")
         except Exception as e:
             print(f"❌ Unexpected error for {url}: {e}")
             raise
@@ -286,6 +285,11 @@ class IdentusDashboardClient:
     def get_credential_record(self, record_id: str) -> Dict:
         """Get a specific credential record and its VC by record ID"""
         try:
+            # Skip fetching if it's a sample/mock record ID or empty
+            if not record_id or record_id.startswith('sample_'):
+                if record_id and record_id.startswith('sample_'):
+                    print(f"ℹ️ Skipping fetch for sample record ID: {record_id}")
+                return {}
             return self._make_request(self.issuer_url, 'GET', f'/issue-credentials/records/{record_id}')
         except Exception as e:
             print(f"⚠️ Could not get credential record {record_id}: {e}")
@@ -298,82 +302,13 @@ class IdentusDashboardClient:
             if record and 'issuedCredentialRaw' in record:
                 # Return the actual VC JSON
                 return record['issuedCredentialRaw']
-            elif record and 'claims' in record:
-                # Fallback to structured claims if VC not available
-                return {
-                    "type": ["VerifiableCredential", "DataLabelerCredential"],
-                    "issuer": record.get('subjectId', 'Unknown'),
-                    "issuanceDate": record.get('createdAt', 'Unknown'),
-                    "credentialSubject": record.get('claims', {}),
-                    "recordId": record_id,
-                    "protocolState": record.get('protocolState', 'Unknown'),
-                    "_note": "This is a reconstructed VC from Identus record data"
-                }
             else:
-                # No real credential found, return None to trigger fallback
+                # No real credential found, return None
                 return None
         except Exception as e:
             print(f"⚠️ Could not get VC for record {record_id}: {e}")
             return None
 
-    def create_mock_vc_from_database(self, credential_data: Dict) -> Dict:
-        """Create a mock VC structure from database credential data"""
-        from datetime import datetime, timedelta
-        import random
-        
-        # Extract data from the database record
-        credential_type = credential_data.get('type', 'unknown')
-        classification_level = credential_data.get('classification_level')
-        issued_date = credential_data.get('issued_date', datetime.now())
-        record_id = credential_data.get('identus_record_id', 'unknown')
-        
-        # Create realistic expiration dates for demo purposes
-        expires_at = credential_data.get('expires_at')
-        if not expires_at and credential_type != 'basic_enterprise':
-            # Generate demo expiration dates
-            days_to_expiry = random.choice([5, 15, 45, 90])  # Some soon, some later
-            expires_at = datetime.now() + timedelta(days=days_to_expiry)
-        
-        # Create a W3C VC compliant structure
-        mock_vc = {
-            "@context": [
-                "https://www.w3.org/2018/credentials/v1",
-                "https://hyperledger.github.io/anoncreds-spec/contexts/anoncreds/v1.json"
-            ],
-            "type": ["VerifiableCredential", "DataLabelerCredential"],
-            "issuer": {
-                "id": "did:prism:development-mode-did",
-                "name": "Classification Document System"
-            },
-            "issuanceDate": issued_date.isoformat() if hasattr(issued_date, 'isoformat') else str(issued_date),
-            "expirationDate": expires_at.isoformat() if expires_at and hasattr(expires_at, 'isoformat') else None,
-            "credentialSubject": {
-                "id": f"did:prism:user-{credential_data.get('id', 'unknown')}",
-                "credentialType": credential_type,
-                "credentialCategory": credential_data.get('category', 'unknown'),
-                "classificationLevel": classification_level,
-                "enterpriseAccount": "DEFAULT_ENTERPRISE",
-                "email": "user@company.com",
-                "fullName": "Sample User",
-                "issuedAt": issued_date.isoformat() if hasattr(issued_date, 'isoformat') else str(issued_date),
-                "status": credential_data.get('status', 'issued')
-            },
-            "proof": {
-                "type": "Ed25519Signature2020",
-                "created": issued_date.isoformat() if hasattr(issued_date, 'isoformat') else str(issued_date),
-                "proofPurpose": "assertionMethod",
-                "verificationMethod": "did:prism:development-mode-did#key-1",
-                "proofValue": "mock-signature-for-demo-purposes-only"
-            },
-            "_metadata": {
-                "recordId": record_id,
-                "databaseId": credential_data.get('id'),
-                "source": "mock_from_database",
-                "note": "This is a mock VC created from database data for demonstration purposes"
-            }
-        }
-        
-        return mock_vc
     
     def get_dids(self) -> Dict:
         """Get all DIDs from Identus"""
@@ -398,27 +333,39 @@ class IdentusDashboardClient:
         
         print(f"🎫 Issuing credential for {application_data['name']}...")
         
+        # Step 1: Create or get connection
+        connection_id = self._establish_connection()
+        
         # Adapt application data to credential claims
         claims = self._adapt_claims_to_schema(application_data)
         
         credential_data = {
+            "connectionId": connection_id,
             "claims": claims,
-            "goal": "Data Labeler Certification",
             "credentialFormat": "JWT",
             "issuingDID": self.issuer_did,
-            "schemaId": self.schema_uri,
             "automaticIssuance": True
         }
         
+        # Add schema only if it exists and is valid
+        if self.schema_uri and not self.schema_uri.startswith("http://localhost:8080/schemas/development"):
+            credential_data["schemaId"] = self.schema_uri
+        
         try:
+            print(f"🔍 DEBUG: Issuer URL: {self.issuer_url}")
+            print(f"🔍 DEBUG: Request URL: {self.issuer_url}/issue-credentials/credential-offers")
+            print(f"🔍 DEBUG: Credential data: {json.dumps(credential_data, indent=2)}")
+            
+            # Try the correct endpoint without /invitation
             response = self._make_request(
                 self.issuer_url, 
                 'POST', 
-                '/issue-credentials/credential-offers/invitation', 
+                '/issue-credentials/credential-offers', 
                 credential_data
             )
             
             print(f"✅ Credential issued successfully!")
+            print(f"🔍 DEBUG: Response: {json.dumps(response, indent=2) if response else 'None'}")
             
             return {
                 'success': True,
@@ -429,7 +376,42 @@ class IdentusDashboardClient:
             
         except Exception as e:
             print(f"❌ Credential issuance failed: {e}")
+            print(f"🔍 DEBUG: Error type: {type(e).__name__}")
             raise
+    
+    def _establish_connection(self) -> str:
+        """Establish connection between issuer and holder agents - SIMPLIFIED"""
+        print("🔗 Creating connection for credential issuance...")
+        
+        try:
+            # Step 1: Check for existing active connections first
+            connections = self._make_request(self.issuer_url, 'GET', '/connections')
+            if connections.get('contents'):
+                for conn in connections['contents']:
+                    if conn.get('state') in ['ConnectionResponseSent', 'ConnectionResponseReceived', 'InvitationGenerated']:
+                        print(f"✅ Using existing connection: {conn['connectionId']} (state: {conn.get('state')})")
+                        return conn['connectionId']
+            
+            # Step 2: Create new connection invitation
+            invitation_data = {"label": "Credential Issuance Connection"}
+            
+            invitation_response = self._make_request(
+                self.issuer_url, 
+                'POST', 
+                '/connections', 
+                invitation_data
+            )
+            
+            connection_id = invitation_response['connectionId']
+            print(f"🔗 Created connection: {connection_id}")
+            
+            # Return the connection ID immediately - don't wait for acceptance
+            # The Identus agent should handle the connection internally
+            return connection_id
+            
+        except Exception as e:
+            print(f"❌ Failed to establish connection: {e}")
+            raise Exception(f"Could not establish connection: {e}")
     
     def _adapt_claims_to_schema(self, app_data: Dict) -> Dict:
         """Adapt application data to match schema requirements"""
@@ -531,24 +513,10 @@ class IdentusDashboardClient:
                                         credential_type: str) -> dict:
         """Issue credential to enterprise-managed identity"""
         if not self.issuer_did or not self.schema_uri:
-            print("⚠️ Identus not fully initialized. Using development mode for credential issuance.")
-            # Return mock credential for development
+            print("⚠️ Identus not fully initialized. Cannot issue credentials.")
             return {
-                'success': True,
-                'credentialId': f'dev-{credential_type}-{int(datetime.now().timestamp())}',
-                'invitationUrl': f'mock://credential/{credential_type}',
-                'identusRecordId': f'dev-record-{int(datetime.now().timestamp())}',
-                'claims': {
-                    "identityHash": identity_hash,
-                    "enterpriseAccount": enterprise_account_name,
-                    "credentialType": credential_type,
-                    "issuedAt": datetime.now().isoformat(),
-                    "mode": "development"
-                },
-                'credentialType': credential_type,
-                'enterpriseAccount': enterprise_account_name,
-                'identityHash': identity_hash,
-                'developmentMode': True
+                'success': False,
+                'error': 'Identus not initialized. Please ensure agents are running.'
             }
         
         print(f"🎫 Issuing {credential_type} credential for enterprise user...")
@@ -609,19 +577,10 @@ class IdentusDashboardClient:
             }
             
         except Exception as e:
-            print(f"⚠️ Enterprise credential issuance failed, using development mode: {e}")
-            # Fallback to development mode credential
+            print(f"⚠️ Enterprise credential issuance failed: {e}")
             return {
-                'success': True,
-                'credentialId': f'dev-fallback-{credential_type}-{int(datetime.now().timestamp())}',
-                'invitationUrl': f'mock://credential/{credential_type}',
-                'identusRecordId': f'dev-fallback-{int(datetime.now().timestamp())}',
-                'claims': claims,
-                'credentialType': credential_type,
-                'enterpriseAccount': enterprise_account_name,
-                'identityHash': identity_hash,
-                'developmentMode': True,
-                'fallback': True
+                'success': False,
+                'error': str(e)
             }
     
     def recover_enterprise_credentials(self, email: str, 

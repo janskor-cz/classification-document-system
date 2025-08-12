@@ -383,17 +383,17 @@ INSERT INTO credential_requests (
      'pending', 'Require access to internal datasets for analysis project', NOW() - INTERVAL '1 day')
 ON CONFLICT (identity_hash, credential_type) DO NOTHING;
 
--- Insert sample issued credentials
+-- Insert sample issued credentials (with empty identus_record_id to avoid API calls)
 INSERT INTO issued_credentials (
     user_id, identity_hash, enterprise_account_name, credential_category, credential_type, 
     classification_level, identus_record_id, status, issued_at
 ) VALUES 
     (1, 'sample_identity_hash_john_doe_12345678', 'DEFAULT_ENTERPRISE', 'enterprise', 'basic_enterprise', 
-     NULL, 'sample_enterprise_record_123', 'issued', NOW() - INTERVAL '7 days'),
+     NULL, '', 'issued', NOW() - INTERVAL '7 days'),
     (1, 'sample_identity_hash_john_doe_12345678', 'DEFAULT_ENTERPRISE', 'classification', 'public', 
-     1, 'sample_public_record_456', 'issued', NOW() - INTERVAL '5 days'),
+     1, '', 'issued', NOW() - INTERVAL '5 days'),
     (2, 'sample_identity_hash_jane_smith_87654321', 'DEFAULT_ENTERPRISE', 'enterprise', 'basic_enterprise', 
-     NULL, 'sample_enterprise_record_789', 'issued', NOW() - INTERVAL '6 days')
+     NULL, '', 'issued', NOW() - INTERVAL '6 days')
 ON CONFLICT DO NOTHING;
 
 -- =====================================================================================

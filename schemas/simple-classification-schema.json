@@ -1,0 +1,47 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "fullName": {
+      "type": "string"
+    },
+    "email": {
+      "type": "string"
+    },
+    "employeeId": {
+      "type": "string"
+    },
+    "department": {
+      "type": "string"
+    },
+    "jobTitle": {
+      "type": "string"
+    },
+    "classificationLevel": {
+      "type": "integer"
+    },
+    "classificationLabel": {
+      "type": "string"
+    },
+    "documentAccessRights": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "issuedAt": {
+      "type": "string"
+    },
+    "expiresAt": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "fullName",
+    "email", 
+    "classificationLevel",
+    "classificationLabel",
+    "issuedAt"
+  ],
+  "additionalProperties": true
+}

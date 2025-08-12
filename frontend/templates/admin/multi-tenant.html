@@ -1,0 +1,542 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Multi-Tenant Identus Administration</title>
+    
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
+    
+    <style>
+        .status-badge.healthy { background-color: #28a745; }
+        .status-badge.unhealthy { background-color: #dc3545; }
+        .status-badge.unknown { background-color: #6c757d; }
+        .status-badge {
+            color: white;
+            padding: 0.25em 0.5em;
+            border-radius: 0.25rem;
+            font-size: 0.75em;
+        }
+        .enterprise-card {
+            border-left: 4px solid #007bff;
+        }
+        .agent-card {
+            border-left: 4px solid #28a745;
+        }
+        .connectivity-status {
+            padding: 0.5rem;
+            border-radius: 0.25rem;
+            margin: 0.25rem 0;
+        }
+        .connectivity-success {
+            background-color: #d4edda;
+            border-color: #c3e6cb;
+            color: #155724;
+        }
+        .connectivity-error {
+            background-color: #f8d7da;
+            border-color: #f5c6cb;
+            color: #721c24;
+        }
+    </style>
+</head>
+<body>
+    <nav class="navbar navbar-expand-lg navbar-dark bg-dark">
+        <div class="container">
+            <a class="navbar-brand" href="{{ url_for('dashboard') }}">
+                <i class="fas fa-network-wired me-2"></i>Multi-Tenant Identus Admin
+            </a>
+            <div class="navbar-nav ms-auto">
+                <a class="nav-link" href="{{ url_for('admin_panel') }}">
+                    <i class="fas fa-certificate me-1"></i>Credentials
+                </a>
+                <a class="nav-link" href="{{ url_for('dashboard') }}">
+                    <i class="fas fa-home me-1"></i>Dashboard
+                </a>
+            </div>
+        </div>
+    </nav>
+
+    <div class="container mt-4">
+        <div class="row">
+            <div class="col-12">
+                <div class="d-flex justify-content-between align-items-center mb-4">
+                    <h2><i class="fas fa-cogs me-2"></i>Multi-Tenant Identus Administration</h2>
+                    <div>
+                        <button id="refreshBtn" class="btn btn-primary me-2">
+                            <i class="fas fa-sync-alt me-1"></i>Refresh Status
+                        </button>
+                        <button id="testConnectivityBtn" class="btn btn-success">
+                            <i class="fas fa-network-wired me-1"></i>Test Connectivity
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Agent Status Section -->
+        <div class="row mb-4">
+            <div class="col-12">
+                <div class="card agent-card">
+                    <div class="card-header bg-success text-white">
+                        <h5 class="mb-0"><i class="fas fa-server me-2"></i>Identus Agent Status</h5>
+                    </div>
+                    <div class="card-body">
+                        <div id="agentStatusLoading" class="text-center">
+                            <div class="spinner-border" role="status">
+                                <span class="visually-hidden">Loading...</span>
+                            </div>
+                            <p class="mt-2">Loading agent status...</p>
+                        </div>
+                        <div id="agentStatusContent" style="display: none;">
+                            <div class="row mb-3">
+                                <div class="col-md-3">
+                                    <div class="card border-success">
+                                        <div class="card-body text-center">
+                                            <h4 class="text-success" id="totalAgents">-</h4>
+                                            <small class="text-muted">Total Agents</small>
+                                        </div>
+                                    </div>
+                                </div>
+                                <div class="col-md-3">
+                                    <div class="card border-success">
+                                        <div class="card-body text-center">
+                                            <h4 class="text-success" id="healthyAgents">-</h4>
+                                            <small class="text-muted">Healthy Agents</small>
+                                        </div>
+                                    </div>
+                                </div>
+                                <div class="col-md-3">
+                                    <div class="card border-warning">
+                                        <div class="card-body text-center">
+                                            <h4 class="text-warning" id="unhealthyAgents">-</h4>
+                                            <small class="text-muted">Unhealthy Agents</small>
+                                        </div>
+                                    </div>
+                                </div>
+                                <div class="col-md-3">
+                                    <div class="card border-info">
+                                        <div class="card-body text-center">
+                                            <h4 class="text-info" id="lastUpdated">-</h4>
+                                            <small class="text-muted">Last Updated</small>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="row" id="agentsList">
+                                <!-- Agent cards will be populated here -->
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Enterprise Status Section -->
+        <div class="row mb-4">
+            <div class="col-12">
+                <div class="card enterprise-card">
+                    <div class="card-header bg-primary text-white">
+                        <h5 class="mb-0"><i class="fas fa-building me-2"></i>Enterprise Configuration Status</h5>
+                    </div>
+                    <div class="card-body">
+                        <div id="enterpriseStatusLoading" class="text-center">
+                            <div class="spinner-border" role="status">
+                                <span class="visually-hidden">Loading...</span>
+                            </div>
+                            <p class="mt-2">Loading enterprise status...</p>
+                        </div>
+                        <div id="enterpriseStatusContent" style="display: none;">
+                            <div class="row mb-3">
+                                <div class="col-md-4">
+                                    <div class="card border-primary">
+                                        <div class="card-body text-center">
+                                            <h4 class="text-primary" id="totalEnterprises">-</h4>
+                                            <small class="text-muted">Total Enterprises</small>
+                                        </div>
+                                    </div>
+                                </div>
+                                <div class="col-md-4">
+                                    <div class="card border-success">
+                                        <div class="card-body text-center">
+                                            <h4 class="text-success" id="enterprisesWithHealthyPrimary">-</h4>
+                                            <small class="text-muted">Healthy Primary Agents</small>
+                                        </div>
+                                    </div>
+                                </div>
+                                <div class="col-md-4">
+                                    <div class="card border-info">
+                                        <div class="card-body text-center">
+                                            <h4 class="text-info" id="enterprisesWithFallbacks">-</h4>
+                                            <small class="text-muted">With Fallback Agents</small>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="row" id="enterprisesList">
+                                <!-- Enterprise cards will be populated here -->
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Connectivity Test Results -->
+        <div class="row mb-4" id="connectivitySection" style="display: none;">
+            <div class="col-12">
+                <div class="card">
+                    <div class="card-header bg-info text-white">
+                        <h5 class="mb-0"><i class="fas fa-network-wired me-2"></i>Connectivity Test Results</h5>
+                    </div>
+                    <div class="card-body">
+                        <div id="connectivityResults">
+                            <!-- Connectivity results will be populated here -->
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Multi-Tenant Operations -->
+        <div class="row mb-4">
+            <div class="col-12">
+                <div class="card">
+                    <div class="card-header bg-secondary text-white">
+                        <h5 class="mb-0"><i class="fas fa-tools me-2"></i>Multi-Tenant Operations</h5>
+                    </div>
+                    <div class="card-body">
+                        <div class="row">
+                            <div class="col-md-6">
+                                <h6>Set Enterprise Context</h6>
+                                <div class="input-group mb-3">
+                                    <select id="enterpriseSelect" class="form-select">
+                                        <option value="">Select Enterprise Account</option>
+                                        <option value="DEFAULT_ENTERPRISE">Default Enterprise</option>
+                                        <option value="ENTERPRISE_A">Enterprise Alpha Corp</option>
+                                        <option value="ENTERPRISE_B">Enterprise Beta Solutions</option>
+                                        <option value="GOVERNMENT_AGENCY">Government Agency</option>
+                                    </select>
+                                    <button id="setContextBtn" class="btn btn-outline-secondary">Set Context</button>
+                                </div>
+                                <div id="contextResult" class="alert" style="display: none;"></div>
+                            </div>
+                            <div class="col-md-6">
+                                <h6>Test Credential Operations</h6>
+                                <div class="d-grid gap-2">
+                                    <button id="testCredentialBtn" class="btn btn-outline-primary">
+                                        <i class="fas fa-certificate me-1"></i>Test Credential Issue
+                                    </button>
+                                    <button id="testVerifyBtn" class="btn btn-outline-success">
+                                        <i class="fas fa-check-circle me-1"></i>Test Credential Verify
+                                    </button>
+                                </div>
+                                <div id="operationResult" class="alert mt-2" style="display: none;"></div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+    
+    <script>
+        let agentStatus = null;
+        let enterpriseStatus = null;
+
+        // Load initial data
+        document.addEventListener('DOMContentLoaded', function() {
+            loadAgentStatus();
+            loadEnterpriseStatus();
+        });
+
+        // Event listeners
+        document.getElementById('refreshBtn').addEventListener('click', function() {
+            loadAgentStatus();
+            loadEnterpriseStatus();
+        });
+
+        document.getElementById('testConnectivityBtn').addEventListener('click', testConnectivity);
+        document.getElementById('setContextBtn').addEventListener('click', setEnterpriseContext);
+        document.getElementById('testCredentialBtn').addEventListener('click', testCredentialIssue);
+        document.getElementById('testVerifyBtn').addEventListener('click', testCredentialVerify);
+
+        async function loadAgentStatus() {
+            try {
+                document.getElementById('agentStatusLoading').style.display = 'block';
+                document.getElementById('agentStatusContent').style.display = 'none';
+
+                const response = await fetch('/api/multi-tenant/agents/status');
+                const data = await response.json();
+
+                if (data.success) {
+                    agentStatus = data.agent_status;
+                    displayAgentStatus(agentStatus);
+                } else {
+                    showError('Failed to load agent status: ' + data.error);
+                }
+            } catch (error) {
+                showError('Error loading agent status: ' + error.message);
+            }
+        }
+
+        async function loadEnterpriseStatus() {
+            try {
+                document.getElementById('enterpriseStatusLoading').style.display = 'block';
+                document.getElementById('enterpriseStatusContent').style.display = 'none';
+
+                const response = await fetch('/api/multi-tenant/enterprises/status');
+                const data = await response.json();
+
+                if (data.success) {
+                    enterpriseStatus = data.enterprise_status;
+                    displayEnterpriseStatus(enterpriseStatus);
+                } else {
+                    showError('Failed to load enterprise status: ' + data.error);
+                }
+            } catch (error) {
+                showError('Error loading enterprise status: ' + error.message);
+            }
+        }
+
+        function displayAgentStatus(status) {
+            // Update summary statistics
+            document.getElementById('totalAgents').textContent = status.total_agents;
+            document.getElementById('healthyAgents').textContent = status.healthy_agents;
+            document.getElementById('unhealthyAgents').textContent = status.unhealthy_agents;
+            document.getElementById('lastUpdated').textContent = new Date().toLocaleTimeString();
+
+            // Display agent cards
+            const agentsList = document.getElementById('agentsList');
+            agentsList.innerHTML = '';
+
+            Object.entries(status.agents).forEach(([agentName, agent]) => {
+                const agentCard = createAgentCard(agentName, agent);
+                agentsList.appendChild(agentCard);
+            });
+
+            document.getElementById('agentStatusLoading').style.display = 'none';
+            document.getElementById('agentStatusContent').style.display = 'block';
+        }
+
+        function displayEnterpriseStatus(status) {
+            // Update summary statistics
+            document.getElementById('totalEnterprises').textContent = status.total_enterprises;
+            
+            let healthyPrimary = 0;
+            let withFallbacks = 0;
+            
+            Object.values(status.enterprises).forEach(enterprise => {
+                if (enterprise.primary_healthy) healthyPrimary++;
+                if (enterprise.fallback_agents.length > 0) withFallbacks++;
+            });
+            
+            document.getElementById('enterprisesWithHealthyPrimary').textContent = healthyPrimary;
+            document.getElementById('enterprisesWithFallbacks').textContent = withFallbacks;
+
+            // Display enterprise cards
+            const enterprisesList = document.getElementById('enterprisesList');
+            enterprisesList.innerHTML = '';
+
+            Object.entries(status.enterprises).forEach(([enterpriseName, enterprise]) => {
+                const enterpriseCard = createEnterpriseCard(enterpriseName, enterprise);
+                enterprisesList.appendChild(enterpriseCard);
+            });
+
+            document.getElementById('enterpriseStatusLoading').style.display = 'none';
+            document.getElementById('enterpriseStatusContent').style.display = 'block';
+        }
+
+        function createAgentCard(agentName, agent) {
+            const col = document.createElement('div');
+            col.className = 'col-md-6 col-lg-4 mb-3';
+
+            const statusBadge = agent.is_healthy ? 
+                `<span class="status-badge healthy">Healthy</span>` :
+                `<span class="status-badge unhealthy">Unhealthy</span>`;
+
+            col.innerHTML = `
+                <div class="card h-100">
+                    <div class="card-body">
+                        <h6 class="card-title">
+                            ${agent.name} ${statusBadge}
+                        </h6>
+                        <p class="card-text small">
+                            <strong>URL:</strong> ${agent.url}<br>
+                            <strong>Status:</strong> ${agent.health}<br>
+                            <strong>Max Connections:</strong> ${agent.max_connections}<br>
+                            <strong>API Key:</strong> ${agent.has_api_key ? 'Configured' : 'Not set'}<br>
+                            <strong>Enterprises:</strong> ${agent.enterprise_accounts.join(', ') || 'None'}
+                        </p>
+                    </div>
+                </div>
+            `;
+
+            return col;
+        }
+
+        function createEnterpriseCard(enterpriseName, enterprise) {
+            const col = document.createElement('div');
+            col.className = 'col-md-6 col-lg-4 mb-3';
+
+            const primaryStatus = enterprise.primary_healthy ? 
+                `<span class="status-badge healthy">Healthy</span>` :
+                `<span class="status-badge unhealthy">Unhealthy</span>`;
+
+            col.innerHTML = `
+                <div class="card h-100">
+                    <div class="card-body">
+                        <h6 class="card-title">
+                            ${enterprise.display_name}
+                        </h6>
+                        <p class="card-text small">
+                            <strong>Account:</strong> ${enterpriseName}<br>
+                            <strong>Tenant ID:</strong> ${enterprise.tenant_id}<br>
+                            <strong>Primary Agent:</strong> ${enterprise.primary_agent} ${primaryStatus}<br>
+                            <strong>Fallback Agents:</strong> ${enterprise.fallback_agents.length} (${enterprise.healthy_fallbacks} healthy)<br>
+                            <strong>Classification Levels:</strong> ${enterprise.classification_levels.join(', ')}<br>
+                            <strong>API Key:</strong> ${enterprise.has_api_key ? 'Configured' : 'Not set'}
+                        </p>
+                    </div>
+                </div>
+            `;
+
+            return col;
+        }
+
+        async function testConnectivity() {
+            try {
+                document.getElementById('testConnectivityBtn').disabled = true;
+                document.getElementById('testConnectivityBtn').innerHTML = '<i class="fas fa-spinner fa-spin me-1"></i>Testing...';
+
+                const response = await fetch('/api/multi-tenant/test/connectivity');
+                const data = await response.json();
+
+                if (data.success) {
+                    displayConnectivityResults(data.connectivity_results);
+                    document.getElementById('connectivitySection').style.display = 'block';
+                } else {
+                    showError('Connectivity test failed: ' + data.error);
+                }
+            } catch (error) {
+                showError('Error during connectivity test: ' + error.message);
+            } finally {
+                document.getElementById('testConnectivityBtn').disabled = false;
+                document.getElementById('testConnectivityBtn').innerHTML = '<i class="fas fa-network-wired me-1"></i>Test Connectivity';
+            }
+        }
+
+        function displayConnectivityResults(results) {
+            const resultsContainer = document.getElementById('connectivityResults');
+            resultsContainer.innerHTML = '';
+
+            Object.entries(results).forEach(([enterpriseName, result]) => {
+                const resultDiv = document.createElement('div');
+                resultDiv.className = `connectivity-status ${result.success ? 'connectivity-success' : 'connectivity-error'}`;
+                
+                if (result.success) {
+                    resultDiv.innerHTML = `
+                        <strong>${enterpriseName}:</strong> ✅ Connected successfully<br>
+                        <small>Agent: ${result.agent_used} | Tenant: ${result.tenant_id}</small>
+                    `;
+                } else {
+                    resultDiv.innerHTML = `
+                        <strong>${enterpriseName}:</strong> ❌ Connection failed<br>
+                        <small>Error: ${result.error}</small>
+                    `;
+                }
+
+                resultsContainer.appendChild(resultDiv);
+            });
+        }
+
+        async function setEnterpriseContext() {
+            const enterpriseAccount = document.getElementById('enterpriseSelect').value;
+            if (!enterpriseAccount) {
+                showAlert('contextResult', 'Please select an enterprise account', 'warning');
+                return;
+            }
+
+            try {
+                const response = await fetch('/api/multi-tenant/enterprise/set', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ enterprise_account: enterpriseAccount })
+                });
+
+                const data = await response.json();
+
+                if (data.success) {
+                    showAlert('contextResult', 
+                        `✅ Enterprise context set successfully!<br>
+                        <small>Agent: ${data.current_agent} | Tenant: ${data.tenant_id}</small>`, 
+                        'success');
+                } else {
+                    showAlert('contextResult', '❌ Failed to set context: ' + data.error, 'danger');
+                }
+            } catch (error) {
+                showAlert('contextResult', '❌ Error: ' + error.message, 'danger');
+            }
+        }
+
+        async function testCredentialIssue() {
+            const enterpriseAccount = document.getElementById('enterpriseSelect').value;
+            if (!enterpriseAccount) {
+                showAlert('operationResult', 'Please select and set enterprise context first', 'warning');
+                return;
+            }
+
+            try {
+                const testData = {
+                    identity_hash: 'test-hash-' + Date.now(),
+                    enterprise_account: enterpriseAccount,
+                    credential_type: 'public',
+                    user_info: {
+                        email: 'test@example.com',
+                        full_name: 'Test User',
+                        department: 'Testing'
+                    }
+                };
+
+                const response = await fetch('/api/multi-tenant/credential/issue', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(testData)
+                });
+
+                const data = await response.json();
+
+                if (data.success) {
+                    showAlert('operationResult', 
+                        `✅ Test credential issued successfully!<br>
+                        <small>ID: ${data.credentialId}</small>`, 
+                        'success');
+                } else {
+                    showAlert('operationResult', '❌ Failed to issue credential: ' + data.error, 'danger');
+                }
+            } catch (error) {
+                showAlert('operationResult', '❌ Error: ' + error.message, 'danger');
+            }
+        }
+
+        async function testCredentialVerify() {
+            showAlert('operationResult', 'ℹ️ Verification test would check for existing credentials', 'info');
+        }
+
+        function showAlert(elementId, message, type) {
+            const element = document.getElementById(elementId);
+            element.className = `alert alert-${type}`;
+            element.innerHTML = message;
+            element.style.display = 'block';
+        }
+
+        function showError(message) {
+            console.error(message);
+            alert('Error: ' + message);
+        }
+    </script>
+</body>
+</html>
